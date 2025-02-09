@@ -53,6 +53,20 @@ object App extends IOWebApp {
 
   val render: Resource[IO, HtmlElement[IO]] = div(
     SampleComponent.make(
+      "HTTP input",
+      Schema
+        .struct[(String, String, String)](
+          Schema.string.required[(String, String, String)]("id", _._1).addHints(HttpLabel()),
+          Schema
+            .string
+            .required[(String, String, String)]("name", _._2)
+            .addHints(HttpHeader("x-name")),
+          Schema.string.required[(String, String, String)]("details", _._3),
+        )(Tuple3.apply)
+        .addHints(Http(method = NonEmptyString("PUT"), uri = NonEmptyString("/data/{id}"))),
+      """{"id": "foo", "name": "bar", "details": "baz"}""",
+    ),
+    SampleComponent.make(
       "Document",
       Schema.document,
       """{"foo": "bar"}""",
@@ -71,20 +85,6 @@ object App extends IOWebApp {
       "Union",
       Schema.either(Schema.string, Schema.int).withId("demo", "Union"),
       """{"left": "hello"}""",
-    ),
-    SampleComponent.make(
-      "HTTP input",
-      Schema
-        .struct[(String, String, String)](
-          Schema.string.required[(String, String, String)]("id", _._1).addHints(HttpLabel()),
-          Schema
-            .string
-            .required[(String, String, String)]("name", _._2)
-            .addHints(HttpHeader("x-name")),
-          Schema.string.required[(String, String, String)]("details", _._3),
-        )(Tuple3.apply)
-        .addHints(Http(method = NonEmptyString("PUT"), uri = NonEmptyString("/data/{id}"))),
-      """{"id": "foo", "name": "bar", "details": "baz"}""",
     ),
   )
 
@@ -322,31 +322,41 @@ object SampleComponent {
 
         div(
           h2(sampleLabel),
-          form(Format.values.toList.map { fmt =>
-            label(
-              fmt.name,
-              input.withSelf { self =>
+          div(
+            styleAttr := """display: flex;""".stripMargin,
+            div(
+              styleAttr := "flex: 1",
+              form(Format.values.toList.map { fmt =>
+                label(
+                  styleAttr := "display:block",
+                  fmt.name,
+                  input.withSelf { self =>
+                    (
+                      `type` := "radio",
+                      nameAttr := "format",
+                      value := fmt.name,
+                      checked <-- state.map(_.currentFormat === fmt),
+                      onInput(self.value.get.flatMap(IO.println)),
+                      onChange(self.value.get.map(Format.valueOf).flatMap(updateFormat)),
+                      disabled <-- state.map(_.result.isLeft),
+                    )
+                  },
+                )
+              }),
+              textArea.withSelf { self =>
                 (
-                  `type` := "radio",
-                  nameAttr := "format",
-                  value := fmt.name,
-                  checked <-- state.map(_.currentFormat === fmt),
-                  onInput(self.value.get.flatMap(IO.println)),
-                  onChange(self.value.get.map(Format.valueOf).flatMap(updateFormat)),
-                  disabled <-- state.map(_.result.isLeft),
+                  value <-- state.map(_.currentSource),
+                  onInput(self.value.get.flatMap(updateValue)),
+                  rows := 7,
+                  styleAttr := "width:300px",
                 )
               },
-            )
-          }),
-          textArea.withSelf { self =>
-            (
-              value <-- state.map(_.currentSource),
-              onInput(self.value.get.flatMap(updateValue)),
-              rows := 7,
-              styleAttr := "width:300px",
-            )
-          },
-          div(pre(code(state.map(_.result).map(_.swap.toOption)))),
+            ),
+            div(
+              styleAttr := "flex: 1",
+              pre(code(styleAttr := "color: #aa0000", state.map(_.result).map(_.swap.toOption))),
+            ),
+          ),
         )
       }
   }
