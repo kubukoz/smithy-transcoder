@@ -27,6 +27,7 @@ import monocle.syntax.all.*
 import smithy4s.Blob
 import smithy4s.json.Json
 import smithy4s.schema.Schema
+import smithy4s.xml.Xml
 
 import java.util.Base64
 
@@ -39,8 +40,18 @@ object App extends IOWebApp {
       """{"foo": "bar"}""",
     ),
     SampleComponent.make(
+      "String",
+      Schema.string,
+      """"foo"""",
+    ),
+    SampleComponent.make(
+      "Struct",
+      Schema.tuple(Schema.string, Schema.int).withId("demo", "Struct"),
+      """{"_1": "foo", "_2": 42}""",
+    ),
+    SampleComponent.make(
       "Union",
-      Schema.either(Schema.string, Schema.int),
+      Schema.either(Schema.string, Schema.int).withId("demo", "Union"),
       """{"left": "hello"}""",
     ),
   )
@@ -84,6 +95,7 @@ object SampleComponent {
     enum Format derives Eq {
       case JSON
       case Protobuf
+      case XML
 
       def name = productPrefix
 
@@ -109,6 +121,7 @@ object SampleComponent {
                 )
               )
               .leftMap(_.toString)
+          case XML => Xml.decoders.fromSchema(schema).decode(Blob(input)).leftMap(_.toString)
         }
       def encode(v: A): String =
         this match {
@@ -120,6 +133,12 @@ object SampleComponent {
               .toUTF8String
           case Protobuf =>
             smithy4s.protobuf.Protobuf.codecs.fromSchema(schema).writeBlob(v).toBase64String
+          case XML =>
+            Xml
+              .write(v)(
+                using schema
+              )
+              .toUTF8String
         }
     }
 
@@ -152,6 +171,8 @@ object SampleComponent {
             (
               value <-- state.map(_.currentSource),
               onInput(self.value.get.flatMap(updateValue)),
+              rows := 3,
+              styleAttr := "width:200px;",
             )
           },
           div(pre(code(state.map(_.result).map(_.swap.toOption)))),
