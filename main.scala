@@ -32,8 +32,10 @@ import fs2.dom.HtmlElement
 import monocle.syntax.all.*
 import org.http4s.client.Client
 import org.http4s.ember.hack.EncoderHack
+import smithy.api.Http
 import smithy.api.HttpHeader
 import smithy.api.HttpLabel
+import smithy.api.NonEmptyString
 import smithy4s.Blob
 import smithy4s.Hints
 import smithy4s.Service
@@ -72,14 +74,16 @@ object App extends IOWebApp {
     ),
     SampleComponent.make(
       "HTTP input",
-      Schema.struct[(String, String, String)](
-        Schema.string.required[(String, String, String)]("id", _._1).addHints(HttpLabel()),
-        Schema
-          .string
-          .required[(String, String, String)]("name", _._2)
-          .addHints(HttpHeader("x-name")),
-        Schema.string.required[(String, String, String)]("details", _._3),
-      )(Tuple3.apply),
+      Schema
+        .struct[(String, String, String)](
+          Schema.string.required[(String, String, String)]("id", _._1).addHints(HttpLabel()),
+          Schema
+            .string
+            .required[(String, String, String)]("name", _._2)
+            .addHints(HttpHeader("x-name")),
+          Schema.string.required[(String, String, String)]("details", _._3),
+        )(Tuple3.apply)
+        .addHints(Http(method = NonEmptyString("PUT"), uri = NonEmptyString("/data/{id}"))),
       """{"id": "foo", "name": "bar", "details": "baz"}""",
     ),
   )
@@ -183,12 +187,13 @@ object SampleComponent {
                     val schema: OperationSchema[A, Nothing, Unit, Nothing, Nothing] = Schema
                       .operation(ShapeId("demo", "MyOp"))
                       .withInput(s)
+                      .withHints(s.hints.get(Http).map(a => a: Hints.Binding).toList*)
                     def wrap(input: A): Op[A, Nothing, Unit, Nothing, Nothing] = Op(input)
                   }
                 )
               }
 
-            Deferred[IO, Either[Throwable, A]].flatMap { deff =>
+            Deferred[IO, Either[String, A]].flatMap { deff =>
               SimpleRestJsonBuilder
                 .routes(
                   svc.fromPolyFunction(new PolyFunction5[Op, smithy4s.kinds.Kind1[IO]#toKind5] {
@@ -203,24 +208,35 @@ object SampleComponent {
                 .liftTo[IO]
                 .flatMap { route =>
                   EncoderHack
-                    .requestFromString(input)
+                    .requestFromString {
+                      if input.contains("\r\n") then input
+                      else
+                        // need to restore \r\n from the textarea because browsers swallow it
+                        input.replace("\n", "\r\n")
+                    }
                     .flatMap(route.orNotFound.apply(_))
                     .attempt
                     .flatMap {
-                      case Left(e) => deff.complete(Left(e))
-                      case _       => IO.unit
+                      case Left(e)                        => deff.complete(Left(e.toString()))
+                      case Right(r) if r.status.isSuccess => IO.unit
+                      case Right(r) =>
+                        r.bodyText.compile.string.flatMap { responseText =>
+                          deff.complete(Left(s"HTTP ${r.status}: $responseText"))
+                        }
+
                     }
-                } *> deff.get.map(_.leftMap(_.toString))
+
+                } *> deff.tryGet.flatMap(_.liftTo[IO](new Exception("promise not fulfilled")))
+
             }
         }
       def encode(v: A): IO[String] =
         this match {
           case JSON =>
             Json
-              .writeBlob(v)(
+              .writePrettyString(v)(
                 using schema
               )
-              .toUTF8String
               .pure[IO]
 
           case Protobuf =>
@@ -258,6 +274,7 @@ object SampleComponent {
                     val schema: OperationSchema[A, Nothing, Unit, Nothing, Nothing] = Schema
                       .operation(ShapeId("demo", "MyOp"))
                       .withInput(s)
+                      .withHints(s.hints.get(Http).map(a => a: Hints.Binding).toList*)
                     def wrap(input: A): Op[A, Nothing, Unit, Nothing, Nothing] = Op(input)
                   }
                 )
