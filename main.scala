@@ -1,5 +1,6 @@
 //> using dep com.armanbilge::calico::0.2.3
 //> using dep org.typelevel::kittens::3.4.0
+//> using dep org.typelevel::cats-core::2.13.0
 //> using dep com.disneystreaming.smithy4s::smithy4s-xml::0.18.29
 //> using dep com.disneystreaming.smithy4s::smithy4s-protobuf::0.18.29
 //> using dep com.disneystreaming.smithy4s::smithy4s-http4s::0.18.29
@@ -23,26 +24,23 @@ import cats.effect.IO
 import cats.effect.kernel.Deferred
 import cats.effect.kernel.Resource
 import cats.effect.std.Mutex
-import cats.effect.unsafe.IORuntime
 import cats.kernel.Eq
 import cats.syntax.all.*
 import fs2.concurrent.SignallingRef
 import fs2.dom.HtmlDivElement
 import fs2.dom.HtmlElement
 import monocle.syntax.all.*
-import org.http4s.Request
 import org.http4s.client.Client
 import org.http4s.ember.hack.EncoderHack
 import smithy.api.HttpHeader
 import smithy.api.HttpLabel
-import smithy.api.HttpPayload
 import smithy4s.Blob
 import smithy4s.Hints
 import smithy4s.Service
 import smithy4s.ShapeId
 import smithy4s.http4s.SimpleRestJsonBuilder
-import smithy4s.http4s.internals.SimpleRestJsonCodecs
 import smithy4s.json.Json
+import smithy4s.kinds.PolyFunction5
 import smithy4s.schema.OperationSchema
 import smithy4s.schema.Schema
 import smithy4s.xml.Xml
@@ -98,10 +96,12 @@ object SampleComponent {
       currentFormat: Format,
       result: Either[String, A],
     ) {
-      def updateSource(newSource: String): State = copy(
-        currentSource = newSource,
-        result = currentFormat.decode(newSource),
-      )
+      def updateSource(newSource: String): IO[State] = currentFormat.decode(newSource).map { r =>
+        copy(
+          currentSource = newSource,
+          result = r,
+        )
+      }
 
       def updateFormat(newFormat: Format): IO[State] =
         result match {
@@ -120,7 +120,7 @@ object SampleComponent {
 
       private def zero = State("", Format.JSON, Left("default value! you shouldn't see this."))
 
-      def init(s: String): State = zero.updateSource(s)
+      def init(s: String): IO[State] = zero.updateSource(s)
 
     }
 
@@ -133,7 +133,7 @@ object SampleComponent {
       def name = productPrefix
 
       // todo: look into whether this caches decoders properly
-      def decode(input: String): Either[String, A] =
+      def decode(input: String): IO[Either[String, A]] =
         this match {
           case JSON =>
             Json
@@ -141,6 +141,7 @@ object SampleComponent {
                 using schema
               )
               .leftMap(_.toString)
+              .pure[IO]
 
           case Protobuf =>
             smithy4s
@@ -154,10 +155,63 @@ object SampleComponent {
                 )
               )
               .leftMap(_.toString)
-          case XML => Xml.decoders.fromSchema(schema).decode(Blob(input)).leftMap(_.toString)
+              .pure[IO]
+          case XML =>
+            Xml
+              .decoders
+              .fromSchema(schema)
+              .decode(Blob(input))
+              .leftMap(_.toString)
+              .pure[IO]
 
           // todo
-          case HTTP => Left("decoding http is not possible yet")
+          case HTTP =>
+            // todo: uncopy paste
+            case class Op[I, E, O, SI, SO](i: I)
+
+            val s = schema
+
+            val svc =
+              new Service.Reflective[Op] {
+                def hints: Hints = Hints(SimpleRestJson())
+                def id: ShapeId = ShapeId("demo", "MyService")
+                def input[I, E, O, SI, SO](op: Op[I, E, O, SI, SO]): I = op.i
+                def ordinal[I, E, O, SI, SO](op: Op[I, E, O, SI, SO]): Int = 0
+                def version: String = ""
+                val endpoints: IndexedSeq[Endpoint[?, ?, ?, ?, ?]] = IndexedSeq(
+                  new smithy4s.Endpoint[Op, A, Nothing, Unit, Nothing, Nothing] {
+                    val schema: OperationSchema[A, Nothing, Unit, Nothing, Nothing] = Schema
+                      .operation(ShapeId("demo", "MyOp"))
+                      .withInput(s)
+                    def wrap(input: A): Op[A, Nothing, Unit, Nothing, Nothing] = Op(input)
+                  }
+                )
+              }
+
+            Deferred[IO, Either[Throwable, A]].flatMap { deff =>
+              SimpleRestJsonBuilder
+                .routes(
+                  svc.fromPolyFunction(new PolyFunction5[Op, smithy4s.kinds.Kind1[IO]#toKind5] {
+                    def apply[I, E, O, SI, SO](fa: Op[I, E, O, SI, SO]): IO[O] =
+                      deff.complete(fa.i.asInstanceOf[A].asRight) *>
+                        IO.raiseError(new Exception("shouldn't happen"))
+                  })
+                )(
+                  using svc
+                )
+                .make
+                .liftTo[IO]
+                .flatMap { route =>
+                  EncoderHack
+                    .requestFromString(input)
+                    .flatMap(route.orNotFound.apply(_))
+                    .attempt
+                    .flatMap {
+                      case Left(e) => deff.complete(Left(e))
+                      case _       => IO.unit
+                    }
+                } *> deff.get.map(_.leftMap(_.toString))
+            }
         }
       def encode(v: A): IO[String] =
         this match {
@@ -216,7 +270,9 @@ object SampleComponent {
                     Client[IO] { req =>
                       (EncoderHack
                         .requestToString(req)
-                        .flatMap(deff.complete) *> IO.stub).toResource
+                        .flatMap(deff.complete) *> IO.raiseError(
+                        new Exception("encoding error in fake client")
+                      )).toResource
                     }
                   )
                   .make
@@ -229,14 +285,15 @@ object SampleComponent {
     }
 
     (
-      SignallingRef[IO]
-        .of(State.init(initText)),
+      State.init(initText).flatMap(SignallingRef[IO].of[State]),
       Mutex[IO],
     ).tupled
       .toResource
       .flatMap { (state, mutex) =>
-        def updateValue(newValue: String)
-          : IO[Unit] = mutex.lock.surround(state.update(_.updateSource(newValue)))
+        def updateValue(newValue: String): IO[Unit] = mutex
+          .lock
+          .surround(state.get.flatMap(_.updateSource(newValue)).flatMap(state.set))
+
         def updateFormat(newFormat: Format): IO[Unit] = mutex
           .lock
           .surround(
@@ -268,8 +325,8 @@ object SampleComponent {
             (
               value <-- state.map(_.currentSource),
               onInput(self.value.get.flatMap(updateValue)),
-              rows := 3,
-              styleAttr := "width:200px;",
+              rows := 7,
+              styleAttr := "width:300px",
             )
           },
           div(pre(code(state.map(_.result).map(_.swap.toOption)))),

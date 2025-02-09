@@ -5,16 +5,15 @@ import org.http4s.Request
 
 object EncoderHack {
 
-  def requestToString(req: Request[IO]): IO[String] =
-    org
-      .http4s
-      .ember
-      .core
-      .Encoder
-      .reqToBytes(req)
-      .through(fs2.text.utf8.decode[IO])
-      .compile
-      .string
+  def requestToString(req: Request[IO]): IO[String] = org
+    .http4s
+    .ember
+    .core
+    .Encoder
+    .reqToBytes(req)
+    .compile
+    .to(Array)
+    .map(new String(_))
 
   def requestFromString(string: String): IO[Request[IO]] = org
     .http4s
@@ -22,7 +21,7 @@ object EncoderHack {
     .core
     .Parser
     .Request
-    .parser(1024)(string.getBytes(), IO.stub)
+    .parser(1024)(string.getBytes(), IO.pure(None))
     .map(_._1)
 
 }
