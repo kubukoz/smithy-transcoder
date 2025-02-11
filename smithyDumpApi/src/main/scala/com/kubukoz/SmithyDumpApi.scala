@@ -1,9 +1,9 @@
 package com.kubukoz
 
-import cats.effect.IO
-import cats.effect.IOApp
+import cats.effect.*
+import cats.syntax.all.*
 import com.comcast.ip4s.*
-import org.http4s.HttpRoutes
+import org.http4s.*
 import org.http4s.dsl.io.*
 import org.http4s.ember.server.EmberServerBuilder
 
@@ -22,7 +22,9 @@ object SmithyDumpApi extends IOApp.Simple {
           }
           .orNotFound
       )
+      .withErrorHandler { case e => IO.consoleForIO.printStackTrace(e) *> IO.raiseError(e) }
       .build
+      .evalTap(srv => IO.println(show"Running at ${srv.baseUri}"))
       .useForever
 
 }

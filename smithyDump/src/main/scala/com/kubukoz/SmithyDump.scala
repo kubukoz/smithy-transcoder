@@ -11,8 +11,9 @@ object SmithyDump {
     val model = Model
       .assembler()
       .addUnparsedModel("input.smithy", input)
+      .discoverModels
       .assemble()
-      .unwrap();
+      .unwrap()
 
     Node.printJson(
       ModelSerializer

@@ -44,6 +44,8 @@ import smithy4s.Blob
 import smithy4s.Hints
 import smithy4s.Service
 import smithy4s.ShapeId
+import smithy4s.dynamic.DynamicSchemaIndex
+import smithy4s.dynamic.model.Model
 import smithy4s.http4s.SimpleRestJsonBuilder
 import smithy4s.json.Json
 import smithy4s.kinds.PolyFunction5
@@ -73,7 +75,25 @@ object App extends IOWebApp {
   //     .toResource
   // }
 
-  val render: Resource[IO, HtmlElement[IO]] = div(
+  def render: Resource[IO, HtmlElement[IO]] = renderMain(
+    using Dumper.remote
+  )
+
+  def renderMain(
+    using dumper: Dumper
+  ): Resource[IO, HtmlElement[IO]] = div(
+    SampleComponent.make(
+      "Document",
+      Schema.document,
+      initText = """{"foo": "bar"}""",
+      initModel =
+        """$version: "2"
+          |
+          |namespace demo
+          |
+          |document Document
+          |""".stripMargin,
+    ),
     SampleComponent.make(
       "HTTP input",
       Schema
@@ -87,9 +107,14 @@ object App extends IOWebApp {
         )(Tuple3.apply)
         .addHints(Http(method = NonEmptyString("PUT"), uri = NonEmptyString("/data/{id}"))),
       initText = """{"id": "foo", "name": "bar", "details": "baz"}""",
-      initSchema =
+      initModel =
         """$version: "2"
           |namespace demo
+          |
+          |@alloy#simpleRestJson
+          |service MyService {
+          |  operations: [MyOp]
+          |}
           |
           |@http(method: "PUT", uri: "/data/{id}")
           |operation MyOp {
@@ -102,22 +127,10 @@ object App extends IOWebApp {
       """.stripMargin,
     ),
     SampleComponent.make(
-      "Document",
-      Schema.document,
-      initText = """{"foo": "bar"}""",
-      initSchema =
-        """$version: "2"
-          |
-          |namespace demo
-          |
-          |document Document
-          |""".stripMargin,
-    ),
-    SampleComponent.make(
       "String",
       Schema.string,
       initText = """"foo"""",
-      initSchema =
+      initModel =
         """$version: "2"
           |
           |namespace demo
@@ -129,7 +142,7 @@ object App extends IOWebApp {
       "Struct",
       Schema.tuple(Schema.string, Schema.int).withId("demo", "Struct"),
       initText = """{"_1": "foo", "_2": 42}""",
-      initSchema =
+      initModel =
         """$version: "2"
           |
           |namespace demo
@@ -144,7 +157,7 @@ object App extends IOWebApp {
       "Union",
       Schema.either(Schema.string, Schema.int).withId("demo", "Union"),
       initText = """{"left": "hello"}""",
-      initSchema =
+      initModel =
         """$version: "2"
           |
           |namespace demo
@@ -161,39 +174,59 @@ object App extends IOWebApp {
 
 object SampleComponent {
 
-  def make[A](sampleLabel: String, schema: Schema[A], initSchema: String, initText: String)
-    : Resource[IO, HtmlElement[IO]] = {
+  def make(
+    sampleLabel: String,
+    initSchema: Schema[?],
+    initModel: String,
+    initText: String,
+  )(
+    using dumper: Dumper
+  ): Resource[IO, HtmlElement[IO]] = {
 
-    case class State(
+    case class State[A](
+      currentSchema: Schema[A],
       currentSource: String,
       currentFormat: Format,
       result: Either[String, A],
     ) {
-      def updateSource(newSource: String): IO[State] = currentFormat.decode(newSource).map { r =>
-        copy(
-          currentSource = newSource,
-          result = r,
+      def updateSource(newSource: String): IO[State[A]] = currentFormat
+        .decode(newSource)(
+          using currentSchema
         )
-      }
+        .map { r =>
+          copy(
+            currentSource = newSource,
+            result = r,
+          )
+        }
 
-      def updateFormat(newFormat: Format): IO[State] =
+      def updateFormat(newFormat: Format): IO[State[A]] =
         result match {
           case Left(_) => this.pure[IO]
           case Right(v) =>
-            newFormat.encode(v).map { encoded =>
-              copy(
-                currentFormat = newFormat,
-                currentSource = encoded,
+            newFormat
+              .encode(v)(
+                using currentSchema
               )
-            }
+              .map { encoded =>
+                copy(
+                  currentFormat = newFormat,
+                  currentSource = encoded,
+                )
+              }
         }
     }
 
     object State {
 
-      private def zero = State("", Format.JSON, Left("default value! you shouldn't see this."))
+      private def zero = State(
+        currentSchema = initSchema,
+        currentSource = "",
+        currentFormat = Format.JSON,
+        result = Left("default value! you shouldn't see this."),
+      )
 
-      def init(s: String): IO[State] = zero.updateSource(s)
+      def init(s: String): IO[State[?]] = zero.updateSource(s)
 
     }
 
@@ -206,13 +239,15 @@ object SampleComponent {
       def name = productPrefix
 
       // todo: look into whether this caches decoders properly
-      def decode(input: String): IO[Either[String, A]] =
+      def decode[A](
+        input: String
+      )(
+        using Schema[A]
+      ): IO[Either[String, A]] =
         this match {
           case JSON =>
             Json
-              .read(Blob(input))(
-                using schema
-              )
+              .read(Blob(input))
               .leftMap(_.toString)
               .pure[IO]
 
@@ -221,7 +256,7 @@ object SampleComponent {
               .protobuf
               .Protobuf
               .codecs
-              .fromSchema(schema)
+              .fromSchema(summon[Schema[A]])
               .readBlob(
                 Blob(
                   Base64.getDecoder.decode(input)
@@ -232,17 +267,14 @@ object SampleComponent {
           case XML =>
             Xml
               .decoders
-              .fromSchema(schema)
+              .fromSchema(summon[Schema[A]])
               .decode(Blob(input))
               .leftMap(_.toString)
               .pure[IO]
 
-          // todo
           case HTTP =>
             // todo: uncopy paste
             case class Op[I, E, O, SI, SO](i: I)
-
-            val s = schema
 
             val svc =
               new Service.Reflective[Op] {
@@ -255,8 +287,10 @@ object SampleComponent {
                   new smithy4s.Endpoint[Op, A, Nothing, Unit, Nothing, Nothing] {
                     val schema: OperationSchema[A, Nothing, Unit, Nothing, Nothing] = Schema
                       .operation(ShapeId("demo", "MyOp"))
-                      .withInput(s)
-                      .withHints(s.hints.get(Http).map(a => a: Hints.Binding).toList*)
+                      .withInput(summon[Schema[A]])
+                      .withHints(
+                        summon[Schema[A]].hints.get(Http).map(a => a: Hints.Binding).toList*
+                      )
                     def wrap(input: A): Op[A, Nothing, Unit, Nothing, Nothing] = Op(input)
                   }
                 )
@@ -267,7 +301,7 @@ object SampleComponent {
                 .routes(
                   svc.fromPolyFunction(new PolyFunction5[Op, smithy4s.kinds.Kind1[IO]#toKind5] {
                     def apply[I, E, O, SI, SO](fa: Op[I, E, O, SI, SO]): IO[O] =
-                      deff.complete(fa.i.asInstanceOf[A].asRight) *>
+                      deff.complete(svc.input(fa).asInstanceOf[A].asRight) *>
                         IO.raiseError(new Exception("shouldn't happen"))
                   })
                 )(
@@ -299,13 +333,15 @@ object SampleComponent {
 
             }
         }
-      def encode(v: A): IO[String] =
+      def encode[A](
+        v: A
+      )(
+        using Schema[A]
+      ): IO[String] =
         this match {
           case JSON =>
             Json
-              .writePrettyString(v)(
-                using schema
-              )
+              .writePrettyString(v)
               .pure[IO]
 
           case Protobuf =>
@@ -313,23 +349,19 @@ object SampleComponent {
               .protobuf
               .Protobuf
               .codecs
-              .fromSchema(schema)
+              .fromSchema(summon[Schema[A]])
               .writeBlob(v)
               .toBase64String
               .pure[IO]
 
           case XML =>
             Xml
-              .write(v)(
-                using schema
-              )
+              .write(v)
               .toUTF8String
               .pure[IO]
 
           case HTTP =>
             case class Op[I, E, O, SI, SO](i: I)
-
-            val s = schema
 
             val svc =
               new Service.Reflective[Op] {
@@ -342,8 +374,10 @@ object SampleComponent {
                   new smithy4s.Endpoint[Op, A, Nothing, Unit, Nothing, Nothing] {
                     val schema: OperationSchema[A, Nothing, Unit, Nothing, Nothing] = Schema
                       .operation(ShapeId("demo", "MyOp"))
-                      .withInput(s)
-                      .withHints(s.hints.get(Http).map(a => a: Hints.Binding).toList*)
+                      .withInput(summon[Schema[A]])
+                      .withHints(
+                        summon[Schema[A]].hints.get(Http).map(a => a: Hints.Binding).toList*
+                      )
                     def wrap(input: A): Op[A, Nothing, Unit, Nothing, Nothing] = Op(input)
                   }
                 )
@@ -365,13 +399,13 @@ object SampleComponent {
                   .toTry
                   .get
                   .apply(Op(v))
-                  .voidError *> deff.get
+                  .attempt *> deff.get
               }
         }
     }
 
     (
-      State.init(initText).flatMap(SignallingRef[IO].of[State]),
+      State.init(initText).flatMap(SignallingRef[IO].of[State[?]]),
       Mutex[IO],
     ).tupled
       .toResource
@@ -389,11 +423,72 @@ object SampleComponent {
               .flatMap(state.set)
           )
 
-        val sourceBlock = textArea(
-          styleAttr := "flex: 2",
-          disabled := true,
-          value := initSchema,
-        )
+        def updateSchema(newModelIDL: String): IO[Unit] =
+          mutex
+            .lock
+            .surround {
+              dumper
+                .dump(newModelIDL)
+                .flatMap { newModelJson =>
+                  Json
+                    .read(Blob(newModelJson))(
+                      using Model.schema
+                    )
+                    .liftTo[IO]
+                }
+                .map { model =>
+                  DynamicSchemaIndex.load(model)
+                }
+                .flatMap { dsi =>
+                  dsi
+                    .allSchemas
+                    .toList
+                    .map(_.shapeId)
+                    .filterNot(_.namespace == "smithy.api")
+                    .filterNot(_.namespace.startsWith("alloy"))
+                    .match {
+                      case one :: Nil => IO.pure(one)
+                      case other =>
+                        IO.raiseError(
+                          new Exception("expected exactly one schema - current app limitation")
+                        )
+                    }
+                    .flatMap { shapeId =>
+                      dsi
+                        .getSchema(shapeId)
+                        .liftTo[IO](new Exception(s"weird - no schema with id $shapeId"))
+                    }
+                }
+                .flatMap { schema =>
+                  // todo: cleanup and so onnnnnn
+
+                  state.get.flatMap { s =>
+                    s.currentFormat
+                      .decode(s.currentSource)(
+                        using schema
+                      )
+                      .map { result =>
+                        s.copy(currentSchema = schema, result = result)
+                      }
+                      .flatMap(state.set)
+                  }
+                }
+
+            }
+            // todo: errors should be displayed somewhere!
+            .attempt
+            .void
+
+        val sourceBlock = textArea.withSelf { self =>
+          (
+            styleAttr := "flex: 2",
+            // disabled := true,
+            onInput(
+              self.value.get.flatMap(updateSchema)
+            ),
+            value := initModel,
+          )
+        }
 
         val demosBlock = div(
           styleAttr := """display: flex; flex: 3""".stripMargin,
@@ -507,6 +602,7 @@ object Dumper {
               "/api/dump",
               new RequestInit {
                 this.method = HttpMethod.POST
+                this.body = s
               },
             )
           }
