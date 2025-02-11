@@ -9,7 +9,7 @@
 //> using dep org.http4s::http4s-ember-server::0.23.27
 //> using dep com.thesamet.scalapb::protobuf-runtime-scala::0.8.14
 //> using platform js
-//> using jsModuleKind common
+//> using jsModuleKind es
 //> using option -no-indent
 //> using option -deprecation
 //> using option -Wunused:all
@@ -32,6 +32,10 @@ import fs2.dom.HtmlElement
 import monocle.syntax.all.*
 import org.http4s.client.Client
 import org.http4s.ember.hack.EncoderHack
+import org.scalajs.dom.Fetch
+import org.scalajs.dom.HttpMethod
+import org.scalajs.dom.RequestInit
+import scalajs.js
 import smithy.api.Http
 import smithy.api.HttpHeader
 import smithy.api.HttpLabel
@@ -48,8 +52,26 @@ import smithy4s.schema.Schema
 import smithy4s.xml.Xml
 
 import java.util.Base64
+import scala.scalajs.js.annotation.JSGlobal
 
 object App extends IOWebApp {
+
+  val sampleInitSchema =
+    """$version: "2"
+      |
+      |namespace demo
+      |
+      |structure Struct {}
+      |""".stripMargin
+
+  // val render: Resource[IO, HtmlElement[IO]] = div {
+  //   Dumper
+  //     .inBrowser
+  //     .flatMap(_.dump(str))
+  //     .timed
+  //     .flatMap((time, r) => IO.println(s"loaded thing in ${time.toMillis}ms").as(r))
+  //     .toResource
+  // }
 
   val render: Resource[IO, HtmlElement[IO]] = div(
     SampleComponent.make(
@@ -64,27 +86,74 @@ object App extends IOWebApp {
           Schema.string.required[(String, String, String)]("details", _._3),
         )(Tuple3.apply)
         .addHints(Http(method = NonEmptyString("PUT"), uri = NonEmptyString("/data/{id}"))),
-      """{"id": "foo", "name": "bar", "details": "baz"}""",
+      initText = """{"id": "foo", "name": "bar", "details": "baz"}""",
+      initSchema =
+        """$version: "2"
+          |namespace demo
+          |
+          |@http(method: "PUT", uri: "/data/{id}")
+          |operation MyOp {
+          |  input := {
+          |    @required @httpLabel id: String
+          |    @required @httpHeader("x-name") name: String
+          |    @required details: String
+          |  }
+          |}
+      """.stripMargin,
     ),
     SampleComponent.make(
       "Document",
       Schema.document,
-      """{"foo": "bar"}""",
+      initText = """{"foo": "bar"}""",
+      initSchema =
+        """$version: "2"
+          |
+          |namespace demo
+          |
+          |document Document
+          |""".stripMargin,
     ),
     SampleComponent.make(
       "String",
       Schema.string,
-      """"foo"""",
+      initText = """"foo"""",
+      initSchema =
+        """$version: "2"
+          |
+          |namespace demo
+          |
+          |string String
+          |""".stripMargin,
     ),
     SampleComponent.make(
       "Struct",
       Schema.tuple(Schema.string, Schema.int).withId("demo", "Struct"),
-      """{"_1": "foo", "_2": 42}""",
+      initText = """{"_1": "foo", "_2": 42}""",
+      initSchema =
+        """$version: "2"
+          |
+          |namespace demo
+          |
+          |structure Struct {
+          |  @required _1: String
+          |  @required _2: Integer
+          |}
+          |""".stripMargin,
     ),
     SampleComponent.make(
       "Union",
       Schema.either(Schema.string, Schema.int).withId("demo", "Union"),
-      """{"left": "hello"}""",
+      initText = """{"left": "hello"}""",
+      initSchema =
+        """$version: "2"
+          |
+          |namespace demo
+          |
+          |union Union {
+          |  left: String
+          |  right: Integer
+          |}
+          |""".stripMargin,
     ),
   )
 
@@ -92,7 +161,7 @@ object App extends IOWebApp {
 
 object SampleComponent {
 
-  def make[A](sampleLabel: String, schema: Schema[A], initText: String)
+  def make[A](sampleLabel: String, schema: Schema[A], initSchema: String, initText: String)
     : Resource[IO, HtmlElement[IO]] = {
 
     case class State(
@@ -320,45 +389,129 @@ object SampleComponent {
               .flatMap(state.set)
           )
 
+        val sourceBlock = textArea(
+          styleAttr := "flex: 2",
+          disabled := true,
+          value := initSchema,
+        )
+
+        val demosBlock = div(
+          styleAttr := """display: flex; flex: 3""".stripMargin,
+          div(
+            styleAttr := "flex: 1",
+            form(Format.values.toList.map { fmt =>
+              label(
+                styleAttr := "display:block",
+                fmt.name,
+                input.withSelf { self =>
+                  (
+                    `type` := "radio",
+                    nameAttr := "format",
+                    value := fmt.name,
+                    checked <-- state.map(_.currentFormat === fmt),
+                    onInput(self.value.get.flatMap(IO.println)),
+                    onChange(self.value.get.map(Format.valueOf).flatMap(updateFormat)),
+                    disabled <-- state.map(_.result.isLeft),
+                  )
+                },
+              )
+            }),
+            textArea.withSelf { self =>
+              (
+                value <-- state.map(_.currentSource),
+                onInput(self.value.get.flatMap(updateValue)),
+                rows := 7,
+                styleAttr := "width:300px",
+              )
+            },
+          ),
+          div(
+            styleAttr := "flex: 1",
+            pre(code(styleAttr := "color: #aa0000", state.map(_.result).map(_.swap.toOption))),
+          ),
+        )
+
         div(
           h2(sampleLabel),
           div(
-            styleAttr := """display: flex;""".stripMargin,
-            div(
-              styleAttr := "flex: 1",
-              form(Format.values.toList.map { fmt =>
-                label(
-                  styleAttr := "display:block",
-                  fmt.name,
-                  input.withSelf { self =>
-                    (
-                      `type` := "radio",
-                      nameAttr := "format",
-                      value := fmt.name,
-                      checked <-- state.map(_.currentFormat === fmt),
-                      onInput(self.value.get.flatMap(IO.println)),
-                      onChange(self.value.get.map(Format.valueOf).flatMap(updateFormat)),
-                      disabled <-- state.map(_.result.isLeft),
-                    )
-                  },
-                )
-              }),
-              textArea.withSelf { self =>
-                (
-                  value <-- state.map(_.currentSource),
-                  onInput(self.value.get.flatMap(updateValue)),
-                  rows := 7,
-                  styleAttr := "width:300px",
-                )
-              },
-            ),
-            div(
-              styleAttr := "flex: 1",
-              pre(code(styleAttr := "color: #aa0000", state.map(_.result).map(_.swap.toOption))),
-            ),
+            styleAttr := "display: flex; gap: 20px",
+            sourceBlock,
+            demosBlock,
           ),
         )
       }
   }
+
+}
+
+object facades {
+
+  @js.native
+  trait Cheerpj extends js.Object {}
+
+  @js.native
+  trait JSDumper extends js.Object {
+    def dump(s: String): js.Promise[String] = js.native
+  }
+
+  object Cheerpj {
+
+    @js.native
+    @JSGlobal
+    def cheerpjInit(): js.Promise[Unit] = js.native
+
+    @js.native
+    @JSGlobal
+    def cheerpjRunLibrary(classpath: String): js.Promise[Cheerpj] = js.native
+
+    extension (c: Cheerpj) {
+
+      def dumper: js.Promise[JSDumper] = c
+        .asInstanceOf[js.Dynamic]
+        .com
+        .kubukoz
+        .SmithyDump
+        .asInstanceOf[js.Promise[JSDumper]]
+
+    }
+
+  }
+
+}
+
+trait Dumper {
+  def dump(s: String): IO[String]
+}
+
+object Dumper {
+
+  def inBrowser: IO[Dumper] =
+    IO.fromPromise(IO(facades.Cheerpj.cheerpjInit())) *>
+      IO.fromPromise(IO(facades.Cheerpj.cheerpjRunLibrary("/app/SmithyDump.jar")))
+        .flatMap { c =>
+          IO.fromPromise(IO(c.dumper))
+        }
+        .map { underlying =>
+          new {
+            def dump(s: String): IO[String] = IO.fromPromise(IO(underlying.dump(s)))
+          }
+        }
+
+  def remote: Dumper =
+    new {
+      // http POST /api/dump s=$s
+      def dump(s: String): IO[String] = IO
+        .fromPromise {
+          IO {
+            Fetch.fetch(
+              "/api/dump",
+              new RequestInit {
+                this.method = HttpMethod.POST
+              },
+            )
+          }
+        }
+        .flatMap(r => IO.fromPromise(IO(r.text())))
+    }
 
 }
