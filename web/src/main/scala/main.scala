@@ -186,7 +186,6 @@ object SampleComponent {
     case class State[A](
       currentIDL: String,
       currentSchema: Schema[A],
-      currentSchemaErrors: Option[String],
       currentSource: String,
       currentFormat: Format,
       result: Either[String, A],
@@ -224,7 +223,6 @@ object SampleComponent {
       private def zero = State(
         currentIDL = initModel,
         currentSchema = initSchema,
-        currentSchemaErrors = None,
         currentSource = "",
         currentFormat = Format.JSON,
         result = Left("default value! you shouldn't see this."),
@@ -375,6 +373,19 @@ object SampleComponent {
     ).tupled
       .toResource
       .flatMap { (state, mutex) =>
+        val mkSchemaSignal = state
+          .map(_.currentIDL)
+          .discrete
+          .changes
+          .switchMap { idl =>
+            fs2.Stream.eval(buildNewSchema(idl).attempt)
+          }
+          .holdResource(initSchema.asRight)
+
+        mkSchemaSignal
+          .map((state, mutex, _))
+      }
+      .flatMap { (state, mutex, schemaSignal) =>
         def updateValue(newValue: String): IO[Unit] = mutex
           .lock
           .surround(state.get.flatMap(_.updateSource(newValue)).flatMap(state.set))
@@ -388,7 +399,6 @@ object SampleComponent {
               .flatMap(state.set)
           )
 
-        val schemaSignal = state.map(s => s)
         def updateSchema(newModelIDL: String): IO[Unit] =
           mutex
             .lock
@@ -438,16 +448,16 @@ object SampleComponent {
                           s.copy(
                             currentSchema = schema,
                             result = result,
-                            currentSchemaErrors = None,
                           )
                         }
                         .flatMap(state.set)
                     }
                   }
             }
-            .onError { case e => state.update(_.copy(currentSchemaErrors = Some(e.getMessage()))) }
             .attempt
             .void
+
+        val schemaErrorsSignal = schemaSignal.map(_.swap.toOption.map(_.getMessage))
 
         val modelSourceBlock = div(
           styleAttr := "display: flex; flex-direction:column; flex: 2; overflow: auto",
@@ -464,7 +474,10 @@ object SampleComponent {
           div(
             pre(
               styleAttr := "text-wrap: wrap",
-              code(styleAttr := "color: #aa0000", state.map(_.currentSchemaErrors)),
+              code(
+                styleAttr := "color: #aa0000",
+                schemaErrorsSignal,
+              ),
             )
           ),
         )
@@ -483,8 +496,7 @@ object SampleComponent {
                     nameAttr := "format",
                     value := fmt.name,
                     checked <-- state.map(_.currentFormat === fmt),
-                    onInput(self.value.get.flatMap(IO.println)),
-                    onChange(self.value.get.map(Format.valueOf).flatMap(updateFormat)),
+                    onInput(self.value.get.map(Format.valueOf).flatMap(updateFormat)),
                     disabled <-- state.map(_.result.isLeft),
                   )
                 },
@@ -594,6 +606,43 @@ object Dumper {
     }
 
 }
+
+private def buildNewSchema(
+  idl: String
+)(
+  using dumper: Dumper
+): IO[Schema[?]] = dumper
+  .dump(idl)
+  .flatMap { newModelJson =>
+    Json
+      .read(Blob(newModelJson))(
+        using Model.schema
+      )
+      .liftTo[IO]
+  }
+  .map { model =>
+    DynamicSchemaIndex.load(model)
+  }
+  .flatMap { dsi =>
+    dsi
+      .allSchemas
+      .toList
+      .map(_.shapeId)
+      .filterNot(_.namespace == "smithy.api")
+      .filterNot(_.namespace.startsWith("alloy"))
+      .match {
+        case one :: Nil => IO.pure(one)
+        case other =>
+          IO.raiseError(
+            new Exception("expected exactly one schema - current app limitation")
+          )
+      }
+      .flatMap { shapeId =>
+        dsi
+          .getSchema(shapeId)
+          .liftTo[IO](new Exception(s"weird - no schema with id $shapeId"))
+      }
+  }
 
 // Make a single-operation service using the given schema as input, also copying the Http hint from said schema to the fake operation.
 private def mkFakeService[A: Schema]: Service.Reflective[[I, _, _, _, _] =>> I] = {
