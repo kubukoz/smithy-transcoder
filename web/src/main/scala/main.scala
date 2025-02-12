@@ -1,60 +1,29 @@
-//> using dep com.armanbilge::calico::0.2.3
-//> using dep org.typelevel::kittens::3.4.0
-//> using dep org.typelevel::cats-core::2.13.0
-//> using dep com.disneystreaming.smithy4s::smithy4s-xml::0.18.29
-//> using dep com.disneystreaming.smithy4s::smithy4s-protobuf::0.18.29
-//> using dep com.disneystreaming.smithy4s::smithy4s-http4s::0.18.29
-//> using dep com.disneystreaming.smithy4s::smithy4s-dynamic::0.18.29
-//> using dep org.http4s::http4s-ember-client::0.23.27
-//> using dep org.http4s::http4s-ember-server::0.23.27
-//> using dep com.thesamet.scalapb::protobuf-runtime-scala::0.8.14
-//> using platform js
-//> using jsModuleKind es
-//> using option -no-indent
-//> using option -deprecation
-//> using option -Wunused:all
-//> using option -Xkind-projector
-//> using scala 3.6.3
-import alloy.SimpleRestJson
 import calico.IOWebApp
 import calico.html.io.*
 import calico.html.io.given
-import cats.derived.*
 import cats.effect.IO
-import cats.effect.kernel.Deferred
 import cats.effect.kernel.Resource
-import cats.effect.std.Mutex
 import cats.kernel.Eq
 import cats.syntax.all.*
+import fs2.concurrent.Signal
 import fs2.concurrent.SignallingRef
 import fs2.dom.HtmlDivElement
 import fs2.dom.HtmlElement
 import monocle.syntax.all.*
-import org.http4s.client.Client
-import org.http4s.ember.hack.EncoderHack
 import org.scalajs.dom.Fetch
 import org.scalajs.dom.HttpMethod
 import org.scalajs.dom.RequestInit
-import scalajs.js
 import smithy.api.Http
 import smithy.api.HttpHeader
 import smithy.api.HttpLabel
 import smithy.api.NonEmptyString
 import smithy4s.Blob
 import smithy4s.Hints
-import smithy4s.Service
 import smithy4s.ShapeId
 import smithy4s.dynamic.DynamicSchemaIndex
 import smithy4s.dynamic.model.Model
-import smithy4s.http4s.SimpleRestJsonBuilder
 import smithy4s.json.Json
-import smithy4s.kinds.PolyFunction5
-import smithy4s.schema.OperationSchema
 import smithy4s.schema.Schema
-import smithy4s.xml.Xml
-
-import java.util.Base64
-import scala.scalajs.js.annotation.JSGlobal
 
 object App extends IOWebApp {
 
@@ -180,199 +149,33 @@ object SampleComponent {
     initModel: String,
     initText: String,
   )(
-    using dumper: Dumper
+    using Dumper
   ): Resource[IO, HtmlElement[IO]] = {
 
-    case class State[A](
+    case class State(
       currentIDL: String,
-      currentSchema: Schema[A],
       currentSource: String,
       currentFormat: Format,
-      result: Either[String, A],
-    ) {
-      def updateSource(newSource: String): IO[State[A]] = currentFormat
-        .decode(newSource)(
-          using currentSchema
-        )
-        .map { r =>
-          copy(
-            currentSource = newSource,
-            result = r,
-          )
-        }
-
-      def updateFormat(newFormat: Format): IO[State[A]] =
-        result match {
-          case Left(_) => this.pure[IO]
-          case Right(v) =>
-            newFormat
-              .encode(v)(
-                using currentSchema
-              )
-              .map { encoded =>
-                copy(
-                  currentFormat = newFormat,
-                  currentSource = encoded,
-                )
-              }
-        }
-    }
+    )
 
     object State {
 
-      private def zero = State(
+      def init(s: String): State = State(
         currentIDL = initModel,
-        currentSchema = initSchema,
-        currentSource = "",
+        currentSource = s,
         currentFormat = Format.JSON,
-        result = Left("default value! you shouldn't see this."),
       )
 
-      def init(s: String): IO[State[?]] = zero.updateSource(s)
-
     }
 
-    enum Format derives Eq {
-      case JSON
-      case Protobuf
-      case XML
-      case HTTP
-
-      def name = productPrefix
-
-      // todo: look into whether this caches decoders properly
-      def decode[A](
-        input: String
-      )(
-        using Schema[A]
-      ): IO[Either[String, A]] =
-        this match {
-          case JSON =>
-            Json
-              .read(Blob(input))
-              .leftMap(_.toString)
-              .pure[IO]
-
-          case Protobuf =>
-            smithy4s
-              .protobuf
-              .Protobuf
-              .codecs
-              .fromSchema(summon[Schema[A]])
-              .readBlob(
-                Blob(
-                  Base64.getDecoder.decode(input)
-                )
-              )
-              .leftMap(_.toString)
-              .pure[IO]
-          case XML =>
-            Xml
-              .decoders
-              .fromSchema(summon[Schema[A]])
-              .decode(Blob(input))
-              .leftMap(_.toString)
-              .pure[IO]
-
-          case HTTP =>
-            val svc = mkFakeService[A]
-
-            Deferred[IO, Either[String, A]].flatMap { deff =>
-              SimpleRestJsonBuilder
-                .routes(
-                  svc.fromPolyFunction(
-                    new PolyFunction5[[I, _, _, _, _] =>> I, smithy4s.kinds.Kind1[IO]#toKind5] {
-                      def apply[I, E, O, SI, SO](fa: I): IO[O] =
-                        deff.complete(fa.asInstanceOf[A].asRight) *>
-                          IO.raiseError(new Exception("shouldn't happen"))
-                    }
-                  )
-                )(
-                  using svc
-                )
-                .make
-                .liftTo[IO]
-                .flatMap { route =>
-                  EncoderHack
-                    .requestFromString {
-                      if input.contains("\r\n") then input
-                      else
-                        // need to restore \r\n from the textarea because browsers swallow it
-                        input.replace("\n", "\r\n")
-                    }
-                    .flatMap(route.orNotFound.apply(_))
-                    .attempt
-                    .flatMap {
-                      case Left(e)                        => deff.complete(Left(e.toString()))
-                      case Right(r) if r.status.isSuccess => IO.unit
-                      case Right(r) =>
-                        r.bodyText.compile.string.flatMap { responseText =>
-                          deff.complete(Left(s"HTTP ${r.status}: $responseText"))
-                        }
-
-                    }
-
-                } *> deff.tryGet.flatMap(_.liftTo[IO](new Exception("promise not fulfilled")))
-
-            }
-        }
-      def encode[A](
-        v: A
-      )(
-        using Schema[A]
-      ): IO[String] =
-        this match {
-          case JSON =>
-            Json
-              .writePrettyString(v)
-              .pure[IO]
-
-          case Protobuf =>
-            smithy4s
-              .protobuf
-              .Protobuf
-              .codecs
-              .fromSchema(summon[Schema[A]])
-              .writeBlob(v)
-              .toBase64String
-              .pure[IO]
-
-          case XML =>
-            Xml
-              .write(v)
-              .toUTF8String
-              .pure[IO]
-
-          case HTTP =>
-            val svc = mkFakeService[A]
-
-            IO.deferred[String]
-              .flatMap { deff =>
-                SimpleRestJsonBuilder(svc)
-                  .client(
-                    Client[IO] { req =>
-                      (EncoderHack
-                        .requestToString(req)
-                        .flatMap(deff.complete) *> IO.raiseError(
-                        new Exception("encoding error in fake client")
-                      )).toResource
-                    }
-                  )
-                  .make
-                  .toTry
-                  .get
-                  .apply(v)
-                  .attempt *> deff.get
-              }
-        }
-    }
-
-    (
-      State.init(initText).flatMap(SignallingRef[IO].of[State[?]]),
-      Mutex[IO],
-    ).tupled
+    SignallingRef[IO]
+      .of(State.init(initText))
       .toResource
-      .flatMap { (state, mutex) =>
+      .flatMap { state =>
+        val currentFormatSignal = state.map(_.currentFormat)
+
+        val currentTextSignal = state.map(_.currentSource)
+
         val mkSchemaSignal = state
           .map(_.currentIDL)
           .discrete
@@ -383,79 +186,29 @@ object SampleComponent {
           .holdResource(initSchema.asRight)
 
         mkSchemaSignal
-          .map((state, mutex, _))
-      }
-      .flatMap { (state, mutex, schemaSignal) =>
-        def updateValue(newValue: String): IO[Unit] = mutex
-          .lock
-          .surround(state.get.flatMap(_.updateSource(newValue)).flatMap(state.set))
+          .flatMap { schemaErrSignal =>
+            val mkCurrentValueSignal = (currentTextSignal, currentFormatSignal, schemaErrSignal)
+              .mapN { (text, format, schemaErr) =>
+                schemaErr.match {
+                  case Right(schema) =>
+                    format.decode(text)(
+                      using schema
+                    )
+                  case Left(e) => IO.pure("Invalid schema".asLeft)
+                }
+              }
+              .discrete
+              .switchMap(fs2.Stream.eval(_).handleErrorWith(_ => fs2.Stream.empty))
+              .holdResource(initSchema.asRight)
 
-        def updateFormat(newFormat: Format): IO[Unit] = mutex
-          .lock
-          .surround(
-            state
-              .get
-              .flatMap(_.updateFormat(newFormat))
-              .flatMap(state.set)
-          )
-
-        def updateSchema(newModelIDL: String): IO[Unit] =
-          mutex
-            .lock
-            .surround {
-              state.update(_.copy(currentIDL = newModelIDL)) *>
-                dumper
-                  .dump(newModelIDL)
-                  .flatMap { newModelJson =>
-                    Json
-                      .read(Blob(newModelJson))(
-                        using Model.schema
-                      )
-                      .liftTo[IO]
-                  }
-                  .map { model =>
-                    DynamicSchemaIndex.load(model)
-                  }
-                  .flatMap { dsi =>
-                    dsi
-                      .allSchemas
-                      .toList
-                      .map(_.shapeId)
-                      .filterNot(_.namespace == "smithy.api")
-                      .filterNot(_.namespace.startsWith("alloy"))
-                      .match {
-                        case one :: Nil => IO.pure(one)
-                        case other =>
-                          IO.raiseError(
-                            new Exception("expected exactly one schema - current app limitation")
-                          )
-                      }
-                      .flatMap { shapeId =>
-                        dsi
-                          .getSchema(shapeId)
-                          .liftTo[IO](new Exception(s"weird - no schema with id $shapeId"))
-                      }
-                  }
-                  .flatMap { schema =>
-                    // todo: cleanup and so onnnnnn
-
-                    state.get.flatMap { s =>
-                      s.currentFormat
-                        .decode(s.currentSource)(
-                          using schema
-                        )
-                        .map { result =>
-                          s.copy(
-                            currentSchema = schema,
-                            result = result,
-                          )
-                        }
-                        .flatMap(state.set)
-                    }
-                  }
+            mkCurrentValueSignal.map { currentValueSignal =>
+              (state, schemaErrSignal, currentValueSignal)
             }
-            .attempt
-            .void
+          }
+      }
+      .flatMap { (state, schemaSignal, currentValueSignal) =>
+        val currentErrorsSignal = currentValueSignal.map(_.swap.toOption)
+        val hasValueErrors = currentErrorsSignal.map(_.isDefined)
 
         val schemaErrorsSignal = schemaSignal.map(_.swap.toOption.map(_.getMessage))
 
@@ -466,7 +219,7 @@ object SampleComponent {
               styleAttr := "flex: 1;min-height: 150px;",
               // disabled := true,
               onInput(
-                self.value.get.flatMap(updateSchema)
+                self.value.get.flatMap(idl => state.update(_.copy(currentIDL = idl)))
               ),
               value <-- state.map(_.currentIDL),
             )
@@ -496,8 +249,10 @@ object SampleComponent {
                     nameAttr := "format",
                     value := fmt.name,
                     checked <-- state.map(_.currentFormat === fmt),
-                    onInput(self.value.get.map(Format.valueOf).flatMap(updateFormat)),
-                    disabled <-- state.map(_.result.isLeft),
+                    onInput(self.value.get.map(Format.valueOf).flatMap { fmt =>
+                      state.update(_.copy(currentFormat = fmt))
+                    }),
+                    disabled <-- hasValueErrors,
                   )
                 },
               )
@@ -505,13 +260,16 @@ object SampleComponent {
             textArea.withSelf { self =>
               (
                 value <-- state.map(_.currentSource),
-                onInput(self.value.get.flatMap(updateValue)),
+                onInput(self.value.get.flatMap(v => state.update(_.copy(currentSource = v)))),
                 rows := 7,
                 styleAttr := "width:300px",
               )
             },
             div(
-              pre(code(styleAttr := "color: #aa0000", state.map(_.result).map(_.swap.toOption)))
+              pre(
+                styleAttr := "text-wrap:wrap",
+                code(styleAttr := "color: #aa0000", currentErrorsSignal),
+              )
             ),
           ),
         )
@@ -525,41 +283,6 @@ object SampleComponent {
           ),
         )
       }
-  }
-
-}
-
-object facades {
-
-  @js.native
-  trait Cheerpj extends js.Object {}
-
-  @js.native
-  trait JSDumper extends js.Object {
-    def dump(s: String): js.Promise[String] = js.native
-  }
-
-  object Cheerpj {
-
-    @js.native
-    @JSGlobal
-    def cheerpjInit(): js.Promise[Unit] = js.native
-
-    @js.native
-    @JSGlobal
-    def cheerpjRunLibrary(classpath: String): js.Promise[Cheerpj] = js.native
-
-    extension (c: Cheerpj) {
-
-      def dumper: js.Promise[JSDumper] = c
-        .asInstanceOf[js.Dynamic]
-        .com
-        .kubukoz
-        .SmithyDump
-        .asInstanceOf[js.Promise[JSDumper]]
-
-    }
-
   }
 
 }
@@ -643,28 +366,3 @@ private def buildNewSchema(
           .liftTo[IO](new Exception(s"weird - no schema with id $shapeId"))
       }
   }
-
-// Make a single-operation service using the given schema as input, also copying the Http hint from said schema to the fake operation.
-private def mkFakeService[A: Schema]: Service.Reflective[[I, _, _, _, _] =>> I] = {
-  // todo: uncopy paste
-  type Op[I, E, O, SI, SO] = I
-
-  new Service.Reflective[Op] {
-    def hints: Hints = Hints(SimpleRestJson())
-    def id: ShapeId = ShapeId("demo", "MyService")
-    def input[I, E, O, SI, SO](op: Op[I, E, O, SI, SO]): I = op
-    def ordinal[I, E, O, SI, SO](op: Op[I, E, O, SI, SO]): Int = 0
-    def version: String = ""
-    val endpoints: IndexedSeq[Endpoint[?, ?, ?, ?, ?]] = IndexedSeq(
-      new smithy4s.Endpoint[Op, A, Nothing, Unit, Nothing, Nothing] {
-        val schema: OperationSchema[A, Nothing, Unit, Nothing, Nothing] = Schema
-          .operation(ShapeId("demo", "MyOp"))
-          .withInput(summon[Schema[A]])
-          .withHints(
-            summon[Schema[A]].hints.get(Http).map(a => a: Hints.Binding).toList*
-          )
-        def wrap(input: A): Op[A, Nothing, Unit, Nothing, Nothing] = input
-      }
-    )
-  }
-}
