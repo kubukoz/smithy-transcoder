@@ -185,6 +185,7 @@ object SampleComponent {
 
     case class State[A](
       currentSchema: Schema[A],
+      currentSchemaErrors: Option[String],
       currentSource: String,
       currentFormat: Format,
       result: Either[String, A],
@@ -221,6 +222,7 @@ object SampleComponent {
 
       private def zero = State(
         currentSchema = initSchema,
+        currentSchemaErrors = None,
         currentSource = "",
         currentFormat = Format.JSON,
         result = Left("default value! you shouldn't see this."),
@@ -468,27 +470,35 @@ object SampleComponent {
                         using schema
                       )
                       .map { result =>
-                        s.copy(currentSchema = schema, result = result)
+                        s.copy(currentSchema = schema, result = result, currentSchemaErrors = None)
                       }
                       .flatMap(state.set)
                   }
                 }
-
             }
-            // todo: errors should be displayed somewhere!
+            .onError { case e => state.update(_.copy(currentSchemaErrors = Some(e.getMessage()))) }
             .attempt
             .void
 
-        val sourceBlock = textArea.withSelf { self =>
-          (
-            styleAttr := "flex: 2",
-            // disabled := true,
-            onInput(
-              self.value.get.flatMap(updateSchema)
-            ),
-            value := initModel,
-          )
-        }
+        val modelSourceBlock = div(
+          styleAttr := "display: flex; flex-direction:column; flex: 2; overflow: auto",
+          textArea.withSelf { self =>
+            (
+              styleAttr := "flex: 1;min-height: 150px;",
+              // disabled := true,
+              onInput(
+                self.value.get.flatMap(updateSchema)
+              ),
+              value := initModel,
+            )
+          },
+          div(
+            pre(
+              styleAttr := "text-wrap: wrap",
+              code(styleAttr := "color: #aa0000", state.map(_.currentSchemaErrors)),
+            )
+          ),
+        )
 
         val demosBlock = div(
           styleAttr := """display: flex; flex: 3""".stripMargin,
@@ -529,7 +539,7 @@ object SampleComponent {
           h2(sampleLabel),
           div(
             styleAttr := "display: flex; gap: 20px",
-            sourceBlock,
+            modelSourceBlock,
             demosBlock,
           ),
         )
@@ -606,7 +616,12 @@ object Dumper {
             )
           }
         }
-        .flatMap(r => IO.fromPromise(IO(r.text())))
+        .flatMap(r =>
+          IO.fromPromise(IO(r.text())).flatMap {
+            case body if r.status == 200 => IO.pure(body)
+            case body                    => IO.raiseError(new Exception(body))
+          }
+        )
     }
 
 }

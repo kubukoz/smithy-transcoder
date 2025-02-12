@@ -17,7 +17,10 @@ object SmithyDumpApi extends IOApp.Simple {
         HttpRoutes
           .of[IO] { case req @ POST -> Root / "api" / "dump" =>
             req.bodyText.compile.string.flatMap { input =>
-              Ok(SmithyDump.dump(input))
+              IO(SmithyDump.dump(input)).attempt.flatMap {
+                case Right(v) => Ok(v)
+                case Left(e)  => InternalServerError(e.getMessage())
+              }
             }
           }
           .orNotFound
