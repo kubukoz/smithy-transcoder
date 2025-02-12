@@ -275,37 +275,18 @@ object SampleComponent {
               .pure[IO]
 
           case HTTP =>
-            // todo: uncopy paste
-            case class Op[I, E, O, SI, SO](i: I)
-
-            val svc =
-              new Service.Reflective[Op] {
-                def hints: Hints = Hints(SimpleRestJson())
-                def id: ShapeId = ShapeId("demo", "MyService")
-                def input[I, E, O, SI, SO](op: Op[I, E, O, SI, SO]): I = op.i
-                def ordinal[I, E, O, SI, SO](op: Op[I, E, O, SI, SO]): Int = 0
-                def version: String = ""
-                val endpoints: IndexedSeq[Endpoint[?, ?, ?, ?, ?]] = IndexedSeq(
-                  new smithy4s.Endpoint[Op, A, Nothing, Unit, Nothing, Nothing] {
-                    val schema: OperationSchema[A, Nothing, Unit, Nothing, Nothing] = Schema
-                      .operation(ShapeId("demo", "MyOp"))
-                      .withInput(summon[Schema[A]])
-                      .withHints(
-                        summon[Schema[A]].hints.get(Http).map(a => a: Hints.Binding).toList*
-                      )
-                    def wrap(input: A): Op[A, Nothing, Unit, Nothing, Nothing] = Op(input)
-                  }
-                )
-              }
+            val svc = mkFakeService[A]
 
             Deferred[IO, Either[String, A]].flatMap { deff =>
               SimpleRestJsonBuilder
                 .routes(
-                  svc.fromPolyFunction(new PolyFunction5[Op, smithy4s.kinds.Kind1[IO]#toKind5] {
-                    def apply[I, E, O, SI, SO](fa: Op[I, E, O, SI, SO]): IO[O] =
-                      deff.complete(svc.input(fa).asInstanceOf[A].asRight) *>
-                        IO.raiseError(new Exception("shouldn't happen"))
-                  })
+                  svc.fromPolyFunction(
+                    new PolyFunction5[[I, _, _, _, _] =>> I, smithy4s.kinds.Kind1[IO]#toKind5] {
+                      def apply[I, E, O, SI, SO](fa: I): IO[O] =
+                        deff.complete(fa.asInstanceOf[A].asRight) *>
+                          IO.raiseError(new Exception("shouldn't happen"))
+                    }
+                  )
                 )(
                   using svc
                 )
@@ -363,27 +344,7 @@ object SampleComponent {
               .pure[IO]
 
           case HTTP =>
-            case class Op[I, E, O, SI, SO](i: I)
-
-            val svc =
-              new Service.Reflective[Op] {
-                def hints: Hints = Hints(SimpleRestJson())
-                def id: ShapeId = ShapeId("demo", "MyService")
-                def input[I, E, O, SI, SO](op: Op[I, E, O, SI, SO]): I = op.i
-                def ordinal[I, E, O, SI, SO](op: Op[I, E, O, SI, SO]): Int = 0
-                def version: String = ""
-                val endpoints: IndexedSeq[Endpoint[?, ?, ?, ?, ?]] = IndexedSeq(
-                  new smithy4s.Endpoint[Op, A, Nothing, Unit, Nothing, Nothing] {
-                    val schema: OperationSchema[A, Nothing, Unit, Nothing, Nothing] = Schema
-                      .operation(ShapeId("demo", "MyOp"))
-                      .withInput(summon[Schema[A]])
-                      .withHints(
-                        summon[Schema[A]].hints.get(Http).map(a => a: Hints.Binding).toList*
-                      )
-                    def wrap(input: A): Op[A, Nothing, Unit, Nothing, Nothing] = Op(input)
-                  }
-                )
-              }
+            val svc = mkFakeService[A]
 
             IO.deferred[String]
               .flatMap { deff =>
@@ -400,7 +361,7 @@ object SampleComponent {
                   .make
                   .toTry
                   .get
-                  .apply(Op(v))
+                  .apply(v)
                   .attempt *> deff.get
               }
         }
@@ -624,4 +585,29 @@ object Dumper {
         )
     }
 
+}
+
+// Make a single-operation service using the given schema as input, also copying the Http hint from said schema to the fake operation.
+private def mkFakeService[A: Schema]: Service.Reflective[[I, _, _, _, _] =>> I] = {
+  // todo: uncopy paste
+  type Op[I, E, O, SI, SO] = I
+
+  new Service.Reflective[Op] {
+    def hints: Hints = Hints(SimpleRestJson())
+    def id: ShapeId = ShapeId("demo", "MyService")
+    def input[I, E, O, SI, SO](op: Op[I, E, O, SI, SO]): I = op
+    def ordinal[I, E, O, SI, SO](op: Op[I, E, O, SI, SO]): Int = 0
+    def version: String = ""
+    val endpoints: IndexedSeq[Endpoint[?, ?, ?, ?, ?]] = IndexedSeq(
+      new smithy4s.Endpoint[Op, A, Nothing, Unit, Nothing, Nothing] {
+        val schema: OperationSchema[A, Nothing, Unit, Nothing, Nothing] = Schema
+          .operation(ShapeId("demo", "MyOp"))
+          .withInput(summon[Schema[A]])
+          .withHints(
+            summon[Schema[A]].hints.get(Http).map(a => a: Hints.Binding).toList*
+          )
+        def wrap(input: A): Op[A, Nothing, Unit, Nothing, Nothing] = input
+      }
+    )
+  }
 }
