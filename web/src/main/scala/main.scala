@@ -83,15 +83,18 @@ object App extends IOWebApp {
     using dumper: Dumper
   ): Resource[IO, HtmlElement[IO]] = div(
     SampleComponent.make(
-      "Document",
-      Schema.document,
-      initText = """{"foo": "bar"}""",
+      "Struct",
+      Schema.tuple(Schema.string, Schema.int).withId("demo", "Struct"),
+      initText = """{"_1": "foo", "_2": 42}""",
       initModel =
         """$version: "2"
           |
           |namespace demo
           |
-          |document Document
+          |structure Struct {
+          |  @required _1: String
+          |  @required _2: Integer
+          |}
           |""".stripMargin,
     ),
     SampleComponent.make(
@@ -139,21 +142,6 @@ object App extends IOWebApp {
           |""".stripMargin,
     ),
     SampleComponent.make(
-      "Struct",
-      Schema.tuple(Schema.string, Schema.int).withId("demo", "Struct"),
-      initText = """{"_1": "foo", "_2": 42}""",
-      initModel =
-        """$version: "2"
-          |
-          |namespace demo
-          |
-          |structure Struct {
-          |  @required _1: String
-          |  @required _2: Integer
-          |}
-          |""".stripMargin,
-    ),
-    SampleComponent.make(
       "Union",
       Schema.either(Schema.string, Schema.int).withId("demo", "Union"),
       initText = """{"left": "hello"}""",
@@ -166,6 +154,18 @@ object App extends IOWebApp {
           |  left: String
           |  right: Integer
           |}
+          |""".stripMargin,
+    ),
+    SampleComponent.make(
+      "Document",
+      Schema.document,
+      initText = """{"foo": "bar"}""",
+      initModel =
+        """$version: "2"
+          |
+          |namespace demo
+          |
+          |document Document
           |""".stripMargin,
     ),
   )
@@ -519,10 +519,9 @@ object SampleComponent {
                 styleAttr := "width:300px",
               )
             },
-          ),
-          div(
-            styleAttr := "flex: 1",
-            pre(code(styleAttr := "color: #aa0000", state.map(_.result).map(_.swap.toOption))),
+            div(
+              pre(code(styleAttr := "color: #aa0000", state.map(_.result).map(_.swap.toOption)))
+            ),
           ),
         )
 
