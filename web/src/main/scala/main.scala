@@ -184,6 +184,7 @@ object SampleComponent {
   ): Resource[IO, HtmlElement[IO]] = {
 
     case class State[A](
+      currentIDL: String,
       currentSchema: Schema[A],
       currentSchemaErrors: Option[String],
       currentSource: String,
@@ -221,6 +222,7 @@ object SampleComponent {
     object State {
 
       private def zero = State(
+        currentIDL = initModel,
         currentSchema = initSchema,
         currentSchemaErrors = None,
         currentSource = "",
@@ -386,56 +388,62 @@ object SampleComponent {
               .flatMap(state.set)
           )
 
+        val schemaSignal = state.map(s => s)
         def updateSchema(newModelIDL: String): IO[Unit] =
           mutex
             .lock
             .surround {
-              dumper
-                .dump(newModelIDL)
-                .flatMap { newModelJson =>
-                  Json
-                    .read(Blob(newModelJson))(
-                      using Model.schema
-                    )
-                    .liftTo[IO]
-                }
-                .map { model =>
-                  DynamicSchemaIndex.load(model)
-                }
-                .flatMap { dsi =>
-                  dsi
-                    .allSchemas
-                    .toList
-                    .map(_.shapeId)
-                    .filterNot(_.namespace == "smithy.api")
-                    .filterNot(_.namespace.startsWith("alloy"))
-                    .match {
-                      case one :: Nil => IO.pure(one)
-                      case other =>
-                        IO.raiseError(
-                          new Exception("expected exactly one schema - current app limitation")
-                        )
-                    }
-                    .flatMap { shapeId =>
-                      dsi
-                        .getSchema(shapeId)
-                        .liftTo[IO](new Exception(s"weird - no schema with id $shapeId"))
-                    }
-                }
-                .flatMap { schema =>
-                  // todo: cleanup and so onnnnnn
-
-                  state.get.flatMap { s =>
-                    s.currentFormat
-                      .decode(s.currentSource)(
-                        using schema
+              state.update(_.copy(currentIDL = newModelIDL)) *>
+                dumper
+                  .dump(newModelIDL)
+                  .flatMap { newModelJson =>
+                    Json
+                      .read(Blob(newModelJson))(
+                        using Model.schema
                       )
-                      .map { result =>
-                        s.copy(currentSchema = schema, result = result, currentSchemaErrors = None)
-                      }
-                      .flatMap(state.set)
+                      .liftTo[IO]
                   }
-                }
+                  .map { model =>
+                    DynamicSchemaIndex.load(model)
+                  }
+                  .flatMap { dsi =>
+                    dsi
+                      .allSchemas
+                      .toList
+                      .map(_.shapeId)
+                      .filterNot(_.namespace == "smithy.api")
+                      .filterNot(_.namespace.startsWith("alloy"))
+                      .match {
+                        case one :: Nil => IO.pure(one)
+                        case other =>
+                          IO.raiseError(
+                            new Exception("expected exactly one schema - current app limitation")
+                          )
+                      }
+                      .flatMap { shapeId =>
+                        dsi
+                          .getSchema(shapeId)
+                          .liftTo[IO](new Exception(s"weird - no schema with id $shapeId"))
+                      }
+                  }
+                  .flatMap { schema =>
+                    // todo: cleanup and so onnnnnn
+
+                    state.get.flatMap { s =>
+                      s.currentFormat
+                        .decode(s.currentSource)(
+                          using schema
+                        )
+                        .map { result =>
+                          s.copy(
+                            currentSchema = schema,
+                            result = result,
+                            currentSchemaErrors = None,
+                          )
+                        }
+                        .flatMap(state.set)
+                    }
+                  }
             }
             .onError { case e => state.update(_.copy(currentSchemaErrors = Some(e.getMessage()))) }
             .attempt
@@ -450,7 +458,7 @@ object SampleComponent {
               onInput(
                 self.value.get.flatMap(updateSchema)
               ),
-              value := initModel,
+              value <-- state.map(_.currentIDL),
             )
           },
           div(
