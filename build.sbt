@@ -19,8 +19,8 @@ val smithyDump = project
 val smithyDumpApi = project
   .settings(
     libraryDependencies ++= Seq(
-      "org.http4s" %% "http4s-dsl" % "0.23.27",
-      "org.http4s" %% "http4s-ember-server" % "0.23.27",
+      "org.http4s" %% "http4s-dsl" % "0.23.30",
+      "org.http4s" %% "http4s-ember-server" % "0.23.30",
     )
   )
   .dependsOn(smithyDump)
@@ -40,7 +40,7 @@ val web = project
       "com.disneystreaming.smithy4s" %%% "smithy4s-protobuf" % "0.18.29",
       "com.disneystreaming.smithy4s" %%% "smithy4s-http4s" % "0.18.29",
       "com.disneystreaming.smithy4s" %%% "smithy4s-dynamic" % "0.18.29",
-      "org.http4s" %%% "http4s-ember-core" % "0.23.27",
+      "org.http4s" %%% "http4s-ember-core" % "0.23.30",
       "com.thesamet.scalapb" %%% "protobuf-runtime-scala" % "0.8.14",
     ),
   )
