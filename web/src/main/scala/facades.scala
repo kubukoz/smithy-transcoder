@@ -12,6 +12,11 @@ object facades {
     def dump(s: String): js.Promise[String] = js.native
   }
 
+  @js.native
+  trait JavaException extends js.Object {
+    def getMessage(): js.Promise[String] = js.native
+  }
+
   object Cheerpj {
 
     @js.native

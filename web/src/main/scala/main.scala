@@ -3,8 +3,10 @@ import calico.html.io.*
 import calico.html.io.given
 import cats.effect.IO
 import cats.effect.kernel.Resource
+import cats.effect.std.Mutex
 import cats.kernel.Eq
 import cats.syntax.all.*
+import facades.JavaException
 import fs2.concurrent.Signal
 import fs2.concurrent.SignallingRef
 import fs2.dom.HtmlDivElement
@@ -25,28 +27,15 @@ import smithy4s.dynamic.model.Model
 import smithy4s.json.Json
 import smithy4s.schema.Schema
 
+import scala.scalajs.js.JavaScriptException
+
 object App extends IOWebApp {
 
-  val sampleInitSchema =
-    """$version: "2"
-      |
-      |namespace demo
-      |
-      |structure Struct {}
-      |""".stripMargin
-
-  // val render: Resource[IO, HtmlElement[IO]] = div {
-  //   Dumper
-  //     .inBrowser
-  //     .flatMap(_.dump(str))
-  //     .timed
-  //     .flatMap((time, r) => IO.println(s"loaded thing in ${time.toMillis}ms").as(r))
-  //     .toResource
-  // }
-
-  def render: Resource[IO, HtmlElement[IO]] = renderMain(
-    using Dumper.remote
-  )
+  def render: Resource[IO, HtmlElement[IO]] = Dumper.inBrowser.toResource.flatMap { dumper =>
+    renderMain(
+      using dumper
+    )
+  }
 
   def renderMain(
     using dumper: Dumper
@@ -310,9 +299,21 @@ object Dumper {
         .flatMap { c =>
           IO.fromPromise(IO(c.dumper))
         }
-        .map { underlying =>
-          new {
-            def dump(s: String): IO[String] = IO.fromPromise(IO(underlying.dump(s)))
+        .flatMap { underlying =>
+          Mutex[IO].map { m =>
+            new {
+              def dump(s: String): IO[String] = m.lock.surround {
+                IO.fromPromise(IO(underlying.dump(s)))
+                  .recoverWith { case JavaScriptException(e) =>
+                    IO.fromPromise(
+                      IO(
+                        e.asInstanceOf[JavaException].getMessage()
+                      )
+                    ).map(new Exception(_))
+                      .flatMap(IO.raiseError)
+                  }
+              }
+            }
           }
         }
 

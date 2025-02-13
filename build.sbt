@@ -1,5 +1,11 @@
 ThisBuild / scalaVersion := "3.6.3"
-ThisBuild / scalacOptions ++= Seq("-no-indent", "-deprecation", "-Wunused:all", "-Xkind-projector")
+ThisBuild / scalacOptions ++= Seq(
+  "-no-indent",
+  "-deprecation",
+  "-Wunused:all",
+  "-Xkind-projector",
+  "-Wvalue-discard",
+)
 
 val smithyDump = project
   .settings(
