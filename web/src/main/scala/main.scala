@@ -1,20 +1,16 @@
 import calico.IOWebApp
+import calico.html.HtmlAttr
 import calico.html.io.*
 import calico.html.io.given
 import cats.effect.IO
 import cats.effect.kernel.Resource
-import cats.effect.std.Mutex
 import cats.kernel.Eq
 import cats.syntax.all.*
-import facades.JavaException
 import fs2.concurrent.Signal
 import fs2.concurrent.SignallingRef
 import fs2.dom.HtmlDivElement
 import fs2.dom.HtmlElement
 import monocle.syntax.all.*
-import org.scalajs.dom.Fetch
-import org.scalajs.dom.HttpMethod
-import org.scalajs.dom.RequestInit
 import smithy.api.Http
 import smithy.api.HttpHeader
 import smithy.api.HttpLabel
@@ -27,18 +23,20 @@ import smithy4s.dynamic.model.Model
 import smithy4s.json.Json
 import smithy4s.schema.Schema
 
-import scala.scalajs.js.JavaScriptException
-
 object App extends IOWebApp {
 
-  def render: Resource[IO, HtmlElement[IO]] = Dumper.inBrowser.toResource.flatMap { dumper =>
-    renderMain(
-      using dumper
+  def render: Resource[IO, HtmlElement[IO]] = Dumper.inBrowser.flatMap { dumper =>
+    div(
+      Dumper
+        .progressBar(dumper),
+      renderMain(
+        using dumper
+      ),
     )
   }
 
   def renderMain(
-    using dumper: Dumper
+    using dumperSig: DumperSig
   ): Resource[IO, HtmlElement[IO]] = div(
     SampleComponent.make(
       "Struct",
@@ -138,7 +136,7 @@ object SampleComponent {
     initModel: String,
     initInput: String,
   )(
-    using Dumper
+    using DumperSig
   ): Resource[IO, HtmlElement[IO]] = {
 
     case class State(
@@ -170,7 +168,17 @@ object SampleComponent {
         .discrete
         .changes
         .switchMap { idl =>
-          fs2.Stream.eval(buildNewSchema(idl).attempt)
+          fs2.Stream.eval(summon[DumperSig].get).flatMap {
+            case Dumper.State.Loaded(dumper) =>
+              fs2
+                .Stream
+                .eval(
+                  buildNewSchema(idl)(
+                    using dumper
+                  ).attempt
+                )
+            case _ => fs2.Stream.empty
+          }
         }
         // for offline / jvmless mode, general "instantness"
         .holdResource(initSchema.asRight)
@@ -212,6 +220,10 @@ object SampleComponent {
         textArea.withSelf { self =>
           (
             styleAttr := "flex: 1;min-height: 150px;",
+            disabled <-- summon[DumperSig].map {
+              case Dumper.State.Loaded(_) => false
+              case _                      => true
+            },
             // disabled := true,
             onInput(
               self.value.get.flatMap(idl => state.update(_.copy(currentIDL = idl)))
@@ -284,61 +296,6 @@ object SampleComponent {
       )
     } yield e
   }
-
-}
-
-trait Dumper {
-  def dump(s: String): IO[String]
-}
-
-object Dumper {
-
-  def inBrowser: IO[Dumper] =
-    IO.fromPromise(IO(facades.Cheerpj.cheerpjInit())) *>
-      IO.fromPromise(IO(facades.Cheerpj.cheerpjRunLibrary("/app/SmithyDump.jar")))
-        .flatMap { c =>
-          IO.fromPromise(IO(c.dumper))
-        }
-        .flatMap { underlying =>
-          Mutex[IO].map { m =>
-            new {
-              def dump(s: String): IO[String] = m.lock.surround {
-                IO.fromPromise(IO(underlying.dump(s)))
-                  .recoverWith { case JavaScriptException(e) =>
-                    IO.fromPromise(
-                      IO(
-                        e.asInstanceOf[JavaException].getMessage()
-                      )
-                    ).map(new Exception(_))
-                      .flatMap(IO.raiseError)
-                  }
-              }
-            }
-          }
-        }
-
-  def remote: Dumper =
-    new {
-      // http POST /api/dump s=$s
-      def dump(s: String): IO[String] = IO
-        .fromPromise {
-          IO {
-            Fetch.fetch(
-              "/api/dump",
-              new RequestInit {
-                this.method = HttpMethod.POST
-                this.body = s
-              },
-            )
-          }
-        }
-        .flatMap(r =>
-          IO.fromPromise(IO(r.text())).flatMap {
-            case body if r.status == 200 => IO.pure(body)
-            case body                    => IO.raiseError(new Exception(body))
-          }
-        )
-    }
 
 }
 

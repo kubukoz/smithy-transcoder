@@ -21,7 +21,7 @@ object facades {
 
     @js.native
     @JSGlobal
-    def cheerpjInit(): js.Promise[Unit] = js.native
+    def cheerpjInit(options: scalajs.js.UndefOr[scalajs.js.Any]): js.Promise[Unit] = js.native
 
     @js.native
     @JSGlobal
