@@ -54,7 +54,7 @@ object App extends IOWebApp {
     SampleComponent.make(
       "Struct",
       Schema.tuple(Schema.string, Schema.int).withId("demo", "Struct"),
-      initText = """{"_1": "foo", "_2": 42}""",
+      initInput = """{"_1": "foo", "_2": 42}""",
       initModel =
         """$version: "2"
           |
@@ -78,7 +78,7 @@ object App extends IOWebApp {
           Schema.string.required[(String, String, String)]("details", _._3),
         )(Tuple3.apply)
         .addHints(Http(method = NonEmptyString("PUT"), uri = NonEmptyString("/data/{id}"))),
-      initText = """{"id": "foo", "name": "bar", "details": "baz"}""",
+      initInput = """{"id": "foo", "name": "bar", "details": "baz"}""",
       initModel =
         """$version: "2"
           |namespace demo
@@ -101,7 +101,7 @@ object App extends IOWebApp {
     SampleComponent.make(
       "String",
       Schema.string,
-      initText = """"foo"""",
+      initInput = """"foo"""",
       initModel =
         """$version: "2"
           |
@@ -113,7 +113,7 @@ object App extends IOWebApp {
     SampleComponent.make(
       "Union",
       Schema.either(Schema.string, Schema.int).withId("demo", "Union"),
-      initText = """{"left": "hello"}""",
+      initInput = """{"left": "hello"}""",
       initModel =
         """$version: "2"
           |
@@ -128,7 +128,7 @@ object App extends IOWebApp {
     SampleComponent.make(
       "Document",
       Schema.document,
-      initText = """{"foo": "bar"}""",
+      initInput = """{"foo": "bar"}""",
       initModel =
         """$version: "2"
           |
@@ -147,142 +147,167 @@ object SampleComponent {
     sampleLabel: String,
     initSchema: Schema[?],
     initModel: String,
-    initText: String,
+    initInput: String,
   )(
     using Dumper
   ): Resource[IO, HtmlElement[IO]] = {
 
     case class State(
       currentIDL: String,
-      currentSource: String,
-      currentFormat: Format,
+      currentInput: String,
+      selectedFormat: Format,
     )
 
     object State {
+      val init: State = {
+        val initFmt = Format.JSON
 
-      def init(s: String): State = State(
-        currentIDL = initModel,
-        currentSource = s,
-        currentFormat = Format.JSON,
-      )
-
+        new State(
+          currentIDL = initModel,
+          currentInput = initInput,
+          selectedFormat = initFmt,
+        )
+      }
     }
+    case class ValueWithSchema[A](a: A, s: Schema[A])
 
-    SignallingRef[IO]
-      .of(State.init(initText))
-      .toResource
-      .flatMap { state =>
-        val currentFormatSignal = state.map(_.currentFormat)
+    for {
+      state <- SignallingRef[IO].of(State.init).toResource
+      currentIDL = state.map(_.currentIDL)
+      currentInput = state.map(_.currentInput)
+      format = state.map(_.selectedFormat)
 
-        val currentTextSignal = state.map(_.currentSource)
+      schema <- currentIDL
+        .discrete
+        .changes
+        .switchMap { idl =>
+          fs2.Stream.eval(buildNewSchema(idl).attempt)
+        }
+        // for offline / jvmless mode, general "instantness"
+        .holdResource(initSchema.asRight)
 
-        val mkSchemaSignal = state
-          .map(_.currentIDL)
+      currentValueSignal <-
+        (currentInput, format, schema)
+          .mapN {
+            case (input, format, Right(schema: Schema[?])) =>
+              format
+                .decode(input)(
+                  using schema
+                )
+                .map(_.tupleRight(schema).map(ValueWithSchema.apply))
+
+            case _ => IO.pure("Invalid schema".asLeft)
+          }
+          .discrete
+          .switchMap(fs2.Stream.eval)
+          .hold1Resource
+
+      encodeOnFormatChange =
+        format
           .discrete
           .changes
-          .switchMap { idl =>
-            fs2.Stream.eval(buildNewSchema(idl).attempt)
-          }
-          .holdResource(initSchema.asRight)
-
-        mkSchemaSignal
-          .flatMap { schemaErrSignal =>
-            val mkCurrentValueSignal = (currentTextSignal, currentFormatSignal, schemaErrSignal)
-              .mapN { (text, format, schemaErr) =>
-                schemaErr.match {
-                  case Right(schema) =>
-                    format.decode(text)(
-                      using schema
+          .zipWithPrevious
+          .filterNot(_._1.isEmpty)
+          .map(_._2)
+          .switchMap { fmt =>
+            fs2.Stream.eval(currentValueSignal.get).flatMap {
+              case Right(vs) =>
+                fs2
+                  .Stream
+                  .eval(
+                    fmt.encode(vs.a)(
+                      using vs.s
                     )
-                  case Left(e) => IO.pure("Invalid schema".asLeft)
-                }
-              }
-              .discrete
-              .switchMap(fs2.Stream.eval(_).handleErrorWith(_ => fs2.Stream.empty))
-              .holdResource(initSchema.asRight)
-
-            mkCurrentValueSignal.map { currentValueSignal =>
-              (state, schemaErrSignal, currentValueSignal)
+                  )
+              case Left(_) => fs2.Stream.empty
             }
           }
-      }
-      .flatMap { (state, schemaSignal, currentValueSignal) =>
-        val currentErrorsSignal = currentValueSignal.map(_.swap.toOption)
-        val hasValueErrors = currentErrorsSignal.map(_.isDefined)
+          .evalMap(newText => state.update(_.copy(currentInput = newText)))
+          .compile
+          .drain
 
-        val schemaErrorsSignal = schemaSignal.map(_.swap.toOption.map(_.getMessage))
+      _ <- encodeOnFormatChange.background
 
-        val modelSourceBlock = div(
-          styleAttr := "display: flex; flex-direction:column; flex: 2; overflow: auto",
+      modelErrors = schema.map(_.swap.toOption.map(_.getMessage))
+
+      modelSourceBlock = div(
+        styleAttr := "display: flex; flex-direction:column; flex: 2; overflow: auto",
+        textArea.withSelf { self =>
+          (
+            styleAttr := "flex: 1;min-height: 150px;",
+            // disabled := true,
+            onInput(
+              self.value.get.flatMap(idl => state.update(_.copy(currentIDL = idl)))
+            ),
+            value <-- currentIDL,
+          )
+        },
+        div(
+          pre(
+            styleAttr := "text-wrap: wrap",
+            code(
+              styleAttr := "color: #aa0000",
+              modelErrors,
+            ),
+          )
+        ),
+      )
+
+      inputErrors = currentValueSignal.map(_.swap.toOption)
+
+      inputView = div(
+        styleAttr := """display: flex; flex: 3""".stripMargin,
+        div(
+          styleAttr := "flex: 1",
+          form(
+            Format
+              .values
+              .toList
+              .map { fmt =>
+                label(
+                  styleAttr := "display:block",
+                  fmt.name,
+                  input.withSelf { self =>
+                    (
+                      `type` := "radio",
+                      nameAttr := "format",
+                      value := fmt.name,
+                      checked <-- format.map(_ === fmt),
+                      onInput(self.value.get.map(Format.valueOf).flatMap { fmt =>
+                        state.update(_.copy(selectedFormat = fmt))
+                      }),
+                      disabled <-- inputErrors.map(_.isDefined),
+                    )
+                  },
+                )
+              }
+          ),
           textArea.withSelf { self =>
             (
-              styleAttr := "flex: 1;min-height: 150px;",
-              // disabled := true,
-              onInput(
-                self.value.get.flatMap(idl => state.update(_.copy(currentIDL = idl)))
-              ),
-              value <-- state.map(_.currentIDL),
+              value <-- currentInput,
+              onInput(self.value.get.flatMap(v => state.update(_.copy(currentInput = v)))),
+              rows := 7,
+              styleAttr := "width:300px",
             )
           },
           div(
             pre(
-              styleAttr := "text-wrap: wrap",
-              code(
-                styleAttr := "color: #aa0000",
-                schemaErrorsSignal,
-              ),
+              styleAttr := "text-wrap:wrap",
+              code(styleAttr := "color: #aa0000", inputErrors),
             )
           ),
-        )
+        ),
+      )
 
-        val demosBlock = div(
-          styleAttr := """display: flex; flex: 3""".stripMargin,
-          div(
-            styleAttr := "flex: 1",
-            form(Format.values.toList.map { fmt =>
-              label(
-                styleAttr := "display:block",
-                fmt.name,
-                input.withSelf { self =>
-                  (
-                    `type` := "radio",
-                    nameAttr := "format",
-                    value := fmt.name,
-                    checked <-- state.map(_.currentFormat === fmt),
-                    onInput(self.value.get.map(Format.valueOf).flatMap { fmt =>
-                      state.update(_.copy(currentFormat = fmt))
-                    }),
-                    disabled <-- hasValueErrors,
-                  )
-                },
-              )
-            }),
-            textArea.withSelf { self =>
-              (
-                value <-- state.map(_.currentSource),
-                onInput(self.value.get.flatMap(v => state.update(_.copy(currentSource = v)))),
-                rows := 7,
-                styleAttr := "width:300px",
-              )
-            },
-            div(
-              pre(
-                styleAttr := "text-wrap:wrap",
-                code(styleAttr := "color: #aa0000", currentErrorsSignal),
-              )
-            ),
-          ),
-        )
-
+      e <- div(
+        h2(sampleLabel),
         div(
-          h2(sampleLabel),
-          div(
-            styleAttr := "display: flex; gap: 20px",
-            modelSourceBlock,
-            demosBlock,
-          ),
-        )
-      }
+          styleAttr := "display: flex; gap: 20px",
+          modelSourceBlock,
+          inputView,
+        ),
+      )
+    } yield e
   }
 
 }
