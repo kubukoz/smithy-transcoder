@@ -202,31 +202,19 @@ object SampleComponent {
           .switchMap(fs2.Stream.eval)
           .hold1Resource
 
-      encodeOnFormatChange =
-        format
-          .discrete
-          .changes
-          .zipWithPrevious
-          .filterNot(_._1.isEmpty)
-          .map(_._2)
-          .switchMap { fmt =>
-            fs2.Stream.eval(currentValueSignal.get).flatMap {
-              case Right(vs) =>
-                fs2
-                  .Stream
-                  .eval(
-                    fmt.encode(vs.a)(
-                      using vs.s
-                    )
-                  )
-              case Left(_) => fs2.Stream.empty
-            }
+      onFormatChange =
+        (fmt: Format) =>
+          currentValueSignal.get.flatMap {
+            case Right(vs) =>
+              fmt
+                .encode(vs.a)(
+                  using vs.s
+                )
+                .flatMap { encoded =>
+                  state.update(_.copy(currentInput = encoded, selectedFormat = fmt))
+                }
+            case Left(_) => IO.unit
           }
-          .evalMap(newText => state.update(_.copy(currentInput = newText)))
-          .compile
-          .drain
-
-      _ <- encodeOnFormatChange.background
 
       modelErrors = schema.map(_.swap.toOption.map(_.getMessage))
 
@@ -273,9 +261,7 @@ object SampleComponent {
                       nameAttr := "format",
                       value := fmt.name,
                       checked <-- format.map(_ === fmt),
-                      onInput(self.value.get.map(Format.valueOf).flatMap { fmt =>
-                        state.update(_.copy(selectedFormat = fmt))
-                      }),
+                      onInput(self.value.get.map(Format.valueOf).flatMap(onFormatChange)),
                       disabled <-- inputErrors.map(_.isDefined),
                     )
                   },
