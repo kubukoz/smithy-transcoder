@@ -81,7 +81,7 @@ object Dumper {
                       .JSON
                       .parse(
                         // result of cjGetRuntimeResources (you can call it from the console, it's a global)
-                        """{"/lt/8/jre/lib/javaws.jar":[0,131072,1441792,1703936],"/lt/8/jre/lib/rt.jar":[0,131072,10223616,12451840,15204352,15335424,15466496,15597568,17694720,17825792,18350080,18612224,19005440,19136512,20840448,21233664,21364736,21757952,22020096,26869760],"/lt/8/jre/lib/resources.jar":[0,131072,917504,1179648],"/lt/8/jre/lib/charsets.jar":[0,131072,1703936,1835008],"/lt/8/jre/lib/jce.jar":[0,131072],"/lt/8/jre/lib/jsse.jar":[0,131072,786432,917504],"/lt/8/lib/ext/meta-index":[0,131072],"/lt/etc/passwd":[0,131072],"/lt/8/jre/lib/cheerpj-awt.jar":[0,131072],"/lt/8/lib/logging.properties":[0,131072],"/lt/etc/localtime":[],"/lt/8/lib/ext":[],"/lt/8/lib/ext/index.list":[],"/lt/8/jre/lib/meta-index":[0,131072],"/lt/8/lib/ext/localedata.jar":[],"/lt/8/lib/ext/sunjce_provider.jar":[],"/lt/8/jre/lib":[]}"""
+                        """{"/lt/8/jre/lib/rt.jar":[0,131072,10223616,12451840,15204352,15335424,15466496,15597568,17694720,17825792,18350080,18612224,19005440,19136512,20840448,21233664,21364736,21757952,22020096,26869760],"/lt/8/jre/lib/cheerpj-awt.jar":[0,131072],"/lt/etc/passwd":[0,131072],"/lt/etc/localtime":[],"/lt/8/lib/ext/meta-index":[0,131072],"/lt/8/lib/ext":[],"/lt/8/lib/ext/index.list":[],"/lt/8/lib/ext/localedata.jar":[],"/lt/8/jre/lib/jsse.jar":[0,131072,786432,917504],"/lt/8/jre/lib/jce.jar":[0,131072],"/lt/8/jre/lib/charsets.jar":[0,131072,1703936,1835008],"/lt/8/jre/lib/resources.jar":[0,131072,917504,1179648],"/lt/8/jre/lib/javaws.jar":[0,131072,1441792,1703936],"/lt/8/lib/ext/sunjce_provider.jar":[],"/lt/8/lib/logging.properties":[0,131072],"/lt/8/jre/lib/meta-index":[0,131072],"/lt/8/jre/lib":[]}"""
                       ),
                     preloadProgress = { (preloadDone: Int, preloadTotal: Int) =>
                       val target = State.LoadingCheerp(preloadDone - 1, preloadTotal)
@@ -95,7 +95,6 @@ object Dumper {
                       dispatchito.unsafeRunAndForget(bump)
                     }: scalajs.js.Function2[Int, Int, Unit],
                   )
-
               }
           )
         )
@@ -106,31 +105,38 @@ object Dumper {
             IO.fromPromise(IO(c.dumper))
           }
 
-        val process =
+        val process = Mutex[IO].flatMap { m =>
+          val remapExceptions: PartialFunction[Throwable, IO[Nothing]] = {
+            case JavaScriptException(e) =>
+              m.lock.surround {
+                IO.fromPromise(
+                  IO(
+                    e.asInstanceOf[JavaException].getMessage()
+                  )
+                ).map(new Exception(_))
+                  .flatMap(IO.raiseError)
+              }
+          }
+
           preload
             *>
               loadLib
-                .flatMap { underlying =>
-                  Mutex[IO].map { m =>
-                    new Dumper {
-                      def dump(s: String): IO[String] = m.lock.surround {
+                .map { underlying =>
+                  new Dumper {
+                    def dump(s: String): IO[String] = m
+                      .lock
+                      .surround {
                         IO.fromPromise(IO(underlying.dump(s)))
-                          .recoverWith { case JavaScriptException(e) =>
-                            IO.fromPromise(
-                              IO(
-                                e.asInstanceOf[JavaException].getMessage()
-                              )
-                            ).map(new Exception(_))
-                              .flatMap(IO.raiseError)
-                          }
                       }
-                    }
+                      .recoverWith(remapExceptions)
                   }
                 }
                 .flatTap(_ => state.set(State.LoadingLibrary))
                 // just to finish loading
                 .flatTap(_.dump("").attempt)
                 .flatTap(dumper => state.set(State.Loaded(dumper)))
+                .recoverWith(remapExceptions)
+        }
 
         process.background.as(state)
       }
