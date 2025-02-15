@@ -14,7 +14,6 @@ import fs2.dom.HtmlElement
 import smithy.api.Http
 import smithy.api.HttpHeader
 import smithy.api.HttpLabel
-import smithy.api.HttpPayload
 import smithy.api.NonEmptyString
 import smithy4s.Blob
 import smithy4s.Hints
@@ -23,7 +22,6 @@ import smithy4s.dynamic.DynamicSchemaIndex
 import smithy4s.dynamic.model.Model
 import smithy4s.json.Json
 import smithy4s.schema.Schema
-import smithy4s.schema.Schema.StructSchema
 import util.chaining.*
 
 object App extends IOWebApp {
