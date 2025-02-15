@@ -9,6 +9,7 @@ import facades.JavaException
 import fs2.concurrent.Signal
 import fs2.concurrent.SignallingRef
 import fs2.dom.HtmlElement
+import fs2.dom.Window
 import monocle.syntax.all.*
 import org.scalajs.dom.Fetch
 import org.scalajs.dom.HttpMethod
@@ -99,8 +100,22 @@ object Dumper {
           )
         )
 
-        val loadLib = IO
-          .fromPromise(IO(facades.Cheerpj.cheerpjRunLibrary("/app/SmithyDump.jar")))
+        val loadLib = Window[IO]
+          .location
+          .pathname
+          .get
+          .flatMap { pathName =>
+            IO
+              .fromPromise(
+                IO(
+                  facades
+                    .Cheerpj
+                    .cheerpjRunLibrary(
+                      "/app" + pathName + "SmithyDump.jar"
+                    )
+                )
+              )
+          }
           .flatMap { c =>
             IO.fromPromise(IO(c.dumper))
           }
