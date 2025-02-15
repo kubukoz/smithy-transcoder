@@ -1,6 +1,7 @@
 import calico.html.io.*
 import calico.html.io.given
 import cats.effect.IO
+import cats.effect.kernel.Deferred
 import cats.effect.kernel.Resource
 import cats.effect.std.Dispatcher
 import cats.effect.std.Mutex
@@ -24,7 +25,14 @@ trait Dumper {
 
 object Dumper {
 
+  opaque type Initializer = IO[Unit]
+
+  extension (init: Initializer) {
+    def run: IO[Unit] = init
+  }
+
   enum State {
+    case Uninitialized
     case Init
     case LoadingCheerp(progress: Int, total: Int)
     case LoadingLibrary
@@ -34,14 +42,14 @@ object Dumper {
   def progressBar(signal: Signal[IO, Dumper.State]): Resource[IO, HtmlElement[IO]] = div(
     styleAttr <-- signal
       .map {
-        case State.Loaded(_) => "display: none"
-        case _               => "display: flex; gap: 10px"
+        case State.Uninitialized | State.Loaded(_) => "display: none"
+        case _                                     => "display: flex; gap: 10px"
       },
     signal.map {
-      case State.Init                => "Initializing..."
-      case State.LoadingCheerp(_, _) => "Loading JVM..."
-      case State.LoadingLibrary      => "Loading library..."
-      case _: State.Loaded           => "Loaded"
+      case State.Uninitialized | State.Init => "Initializing..."
+      case State.LoadingCheerp(_, _)        => "Loading JVM..."
+      case State.LoadingLibrary             => "Loading library..."
+      case _: State.Loaded                  => "Loaded"
     },
     progressTag(
       maxAttr <--
@@ -51,7 +59,7 @@ object Dumper {
           case _                             => None
         },
       value <-- signal.map {
-        case State.Init                       => None
+        case State.Uninitialized | State.Init => None
         case State.LoadingCheerp(progress, _) => progress.show.some
         case State.LoadingLibrary             => "99".some
         case State.Loaded(_)                  => "100".some
@@ -59,10 +67,10 @@ object Dumper {
     ),
   )
 
-  def inBrowser: Resource[IO, Signal[IO, State]] =
+  def inBrowser: Resource[IO, (Signal[IO, State], Initializer)] =
     (
       SignallingRef[IO]
-        .of[State](State.Init)
+        .of[State](State.Uninitialized)
         .toResource,
       Dispatcher.sequential[IO],
     )
@@ -118,27 +126,29 @@ object Dumper {
               }
           }
 
-          preload
-            *>
-              loadLib
-                .map { underlying =>
-                  new Dumper {
-                    def dump(s: String): IO[String] = m
-                      .lock
-                      .surround {
-                        IO.fromPromise(IO(underlying.dump(s)))
-                      }
-                      .recoverWith(remapExceptions)
-                  }
+          state.set(State.Init)
+            *> preload
+            *> loadLib
+              .map { underlying =>
+                new Dumper {
+                  def dump(s: String): IO[String] = m
+                    .lock
+                    .surround {
+                      IO.fromPromise(IO(underlying.dump(s)))
+                    }
+                    .recoverWith(remapExceptions)
                 }
-                .flatTap(_ => state.set(State.LoadingLibrary))
-                // just to finish loading
-                .flatTap(_.dump("").attempt)
-                .flatTap(dumper => state.set(State.Loaded(dumper)))
-                .recoverWith(remapExceptions)
+              }
+              .flatTap(_ => state.set(State.LoadingLibrary))
+              // just to finish loading
+              .flatTap(_.dump("").attempt)
+              .flatTap(dumper => state.set(State.Loaded(dumper)))
+              .recoverWith(remapExceptions)
         }
 
-        process.background.as(state)
+        Deferred[IO, Unit].toResource.flatMap { loadRequested =>
+          (loadRequested.get *> process).background.as(state -> loadRequested.complete(()).void)
+        }
       }
 
   def remote: Dumper =

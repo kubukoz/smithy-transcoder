@@ -25,18 +25,21 @@ import smithy4s.schema.Schema
 
 object App extends IOWebApp {
 
-  def render: Resource[IO, HtmlElement[IO]] = Dumper.inBrowser.flatMap { dumper =>
-    div(
-      Dumper
-        .progressBar(dumper),
-      renderMain(
-        using dumper
-      ),
-    )
+  def render: Resource[IO, HtmlElement[IO]] = Dumper.inBrowser.flatMap {
+    (dumper, initializeDumper) =>
+      div(
+        Dumper
+          .progressBar(dumper),
+        renderMain(
+          using dumper,
+          initializeDumper,
+        ),
+      )
   }
 
   def renderMain(
-    using dumperSig: DumperSig
+    using dumperSig: DumperSig,
+    dumperInit: Dumper.Initializer,
   ): Resource[IO, HtmlElement[IO]] = div(
     SampleComponent.make(
       "Struct",
@@ -136,7 +139,8 @@ object SampleComponent {
     initModel: String,
     initInput: String,
   )(
-    using DumperSig
+    using DumperSig,
+    Dumper.Initializer,
   ): Resource[IO, HtmlElement[IO]] = {
 
     case class State(
@@ -229,6 +233,9 @@ object SampleComponent {
               self.value.get.flatMap(idl => state.update(_.copy(currentIDL = idl)))
             ),
             value <-- currentIDL,
+            onMouseMove(
+              summon[Dumper.Initializer].run
+            ),
           )
         },
         div(
