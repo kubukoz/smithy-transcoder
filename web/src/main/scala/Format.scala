@@ -8,6 +8,7 @@ import monocle.syntax.all.*
 import org.http4s.client.Client
 import org.http4s.ember.hack.EncoderHack
 import smithy.api.Http
+import smithy.api.HttpPayload
 import smithy4s.Blob
 import smithy4s.Hints
 import smithy4s.Service
@@ -17,6 +18,7 @@ import smithy4s.json.Json
 import smithy4s.kinds.PolyFunction5
 import smithy4s.schema.OperationSchema
 import smithy4s.schema.Schema
+import smithy4s.schema.Schema.StructSchema
 import smithy4s.xml.Xml
 
 import java.util.Base64
@@ -25,7 +27,7 @@ enum Format derives Eq {
   case JSON
   case Protobuf
   case XML
-  case HTTP
+  case SimpleRestJson
 
   def name = productPrefix
 
@@ -64,7 +66,7 @@ enum Format derives Eq {
           .leftMap(_.toString)
           .pure[IO]
 
-      case HTTP =>
+      case SimpleRestJson =>
         val svc = Format.mkFakeService[A]
 
         Deferred[IO, Either[String, A]]
@@ -138,7 +140,7 @@ enum Format derives Eq {
           .toUTF8String
           .pure[IO]
 
-      case HTTP =>
+      case SimpleRestJson =>
         val svc = Format.mkFakeService[A]
 
         IO.deferred[String]
@@ -171,7 +173,7 @@ object Format {
     type Op[I, E, O, SI, SO] = I
 
     new Service.Reflective[Op] {
-      def hints: Hints = Hints(SimpleRestJson())
+      def hints: Hints = Hints(alloy.SimpleRestJson())
       def id: ShapeId = ShapeId("demo", "MyService")
       def input[I, E, O, SI, SO](op: Op[I, E, O, SI, SO]): I = op
       def ordinal[I, E, O, SI, SO](op: Op[I, E, O, SI, SO]): Int = 0
@@ -180,7 +182,13 @@ object Format {
         new smithy4s.Endpoint[Op, A, Nothing, Unit, Nothing, Nothing] {
           val schema: OperationSchema[A, Nothing, Unit, Nothing, Nothing] = Schema
             .operation(ShapeId("demo", "MyOp"))
-            .withInput(summon[Schema[A]])
+            .withInput(summon[Schema[A]] match {
+              case s: StructSchema[?] => s
+              case other              =>
+                // non-structs can't directly be inputs, so we wrap them in fake structs with a HttpPayload member
+                Schema
+                  .struct[A](other.required[A]("body", identity).addHints(HttpPayload()))(identity)
+            })
             .withHints(
               summon[Schema[A]].hints.get(Http).map(a => a: Hints.Binding).toList*
             )

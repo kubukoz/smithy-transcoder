@@ -2,6 +2,7 @@ import calico.IOWebApp
 import calico.html.HtmlAttr
 import calico.html.io.*
 import calico.html.io.given
+import cats.data.OptionT
 import cats.effect.IO
 import cats.effect.kernel.Resource
 import cats.kernel.Eq
@@ -10,10 +11,10 @@ import fs2.concurrent.Signal
 import fs2.concurrent.SignallingRef
 import fs2.dom.HtmlDivElement
 import fs2.dom.HtmlElement
-import monocle.syntax.all.*
 import smithy.api.Http
 import smithy.api.HttpHeader
 import smithy.api.HttpLabel
+import smithy.api.HttpPayload
 import smithy.api.NonEmptyString
 import smithy4s.Blob
 import smithy4s.Hints
@@ -22,6 +23,8 @@ import smithy4s.dynamic.DynamicSchemaIndex
 import smithy4s.dynamic.model.Model
 import smithy4s.json.Json
 import smithy4s.schema.Schema
+import smithy4s.schema.Schema.StructSchema
+import util.chaining.*
 
 object App extends IOWebApp {
 
@@ -40,7 +43,10 @@ object App extends IOWebApp {
   ): Resource[IO, HtmlElement[IO]] = div(
     SampleComponent.make(
       "Struct",
-      Schema.tuple(Schema.string, Schema.int).withId("demo", "Struct"),
+      Schema
+        .tuple(Schema.string, Schema.int)
+        .withId("demo", "Struct")
+        .toHttpInputSchema,
       initInput = """{"_1": "foo", "_2": 42}""",
       initModel =
         """$version: "2"
@@ -64,7 +70,7 @@ object App extends IOWebApp {
             .addHints(HttpHeader("x-name")),
           Schema.string.required[(String, String, String)]("details", _._3),
         )(Tuple3.apply)
-        .addHints(Http(method = NonEmptyString("PUT"), uri = NonEmptyString("/data/{id}"))),
+        .addHints(Http(NonEmptyString("PUT"), NonEmptyString("/data/{id}"))),
       initInput = """{"id": "foo", "name": "bar", "details": "baz"}""",
       initModel =
         """$version: "2"
@@ -87,7 +93,9 @@ object App extends IOWebApp {
     ),
     SampleComponent.make(
       "String",
-      Schema.string,
+      Schema
+        .string
+        .toHttpInputSchema,
       initInput = """"foo"""",
       initModel =
         """$version: "2"
@@ -99,7 +107,10 @@ object App extends IOWebApp {
     ),
     SampleComponent.make(
       "Union",
-      Schema.either(Schema.string, Schema.int).withId("demo", "Union"),
+      Schema
+        .either(Schema.string, Schema.int)
+        .withId("demo", "Union")
+        .toHttpInputSchema,
       initInput = """{"left": "hello"}""",
       initModel =
         """$version: "2"
@@ -114,7 +125,9 @@ object App extends IOWebApp {
     ),
     SampleComponent.make(
       "Document",
-      Schema.document,
+      Schema
+        .document
+        .toHttpInputSchema,
       initInput = """{"foo": "bar"}""",
       initModel =
         """$version: "2"
@@ -127,6 +140,8 @@ object App extends IOWebApp {
   )
 
 }
+
+private val defaultHttpHint = Http(NonEmptyString("POST"), NonEmptyString("/"))
 
 object SampleComponent {
 
@@ -316,22 +331,56 @@ private def buildNewSchema(
     DynamicSchemaIndex.load(model)
   }
   .flatMap { dsi =>
-    dsi
-      .allSchemas
-      .toList
-      .map(_.shapeId)
-      .filterNot(_.namespace == "smithy.api")
-      .filterNot(_.namespace.startsWith("alloy"))
-      .match {
-        case one :: Nil => IO.pure(one)
-        case other =>
-          IO.raiseError(
-            new Exception("expected exactly one schema - current app limitation")
-          )
-      }
-      .flatMap { shapeId =>
-        dsi
-          .getSchema(shapeId)
-          .liftTo[IO](new Exception(s"weird - no schema with id $shapeId"))
-      }
+    val input =
+      dsi
+        .allSchemas
+        .toList
+        .map(_.shapeId)
+        .filterNot(_.namespace == "smithy.api")
+        .filterNot(_.namespace.startsWith("alloy"))
+        .match {
+          case one :: Nil => IO.pure(one)
+          case other =>
+            IO.raiseError(
+              new Exception("expected exactly one schema - current app limitation")
+            )
+        }
+        .flatMap { shapeId =>
+          dsi
+            .getSchema(shapeId)
+            .liftTo[IO](new Exception(s"weird - no schema with id $shapeId"))
+        }
+
+    val op =
+      dsi
+        .allServices
+        .toList
+        .match {
+          case Nil        => IO.pure(None)
+          case one :: Nil => IO.pure(one.service.some)
+          case more =>
+            IO.raiseError(new Exception("expected up to one service - current app limitation"))
+        }
+        .pipe(OptionT(_))
+        .map(_.endpoints.toList)
+        .semiflatMap {
+          case e :: Nil => IO.pure(e)
+          case other =>
+            IO.raiseError(new Exception("expected exactly one endpoint - current app limitation"))
+        }
+        .value
+
+    // transplant the Http hint from the operation, if one is present.
+    // otherwise, a default value will be used.
+    (input, op).mapN {
+      case (input, None) => input.toHttpInputSchema
+      case (input, Some(op)) =>
+        input.addHints(op.hints.get(Http).toList.map(h => h: Hints.Binding)*)
+    }
   }
+
+extension [A](s: Schema[A]) {
+
+  private def toHttpInputSchema: Schema[A] = s.addHints(defaultHttpHint)
+
+}
