@@ -10,6 +10,9 @@ ThisBuild / scalacOptions ++= Seq(
   "-Wvalue-discard",
 )
 
+// temporary
+ThisBuild / githubWorkflowBuild := Nil
+
 ThisBuild / githubWorkflowPermissions := Some {
   Permissions.Specify(
     pages = PermissionValue.Write,
@@ -34,6 +37,7 @@ ThisBuild / githubWorkflowPublish := Seq(
     params = Map(
       "node-version" -> "20",
       "cache" -> "yarn",
+      "cache-dependency-path" -> "web/yarn.lock",
     ),
   ),
   WorkflowStep.Run(List("yarn"), workingDirectory = Some("web")),
