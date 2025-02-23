@@ -179,4 +179,8 @@ object Dumper {
         )
     }
 
+  def liftToSig(d: Dumper): Resource[IO, DumperSig] = Resource.pure(
+    Signal.constant(State.Loaded(d))
+  )
+
 }

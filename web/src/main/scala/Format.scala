@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.effect.kernel.Deferred
 import cats.kernel.Eq
 import cats.syntax.all.*
+import com.github.plokhotnyuk.jsoniter_scala.core.WriterConfig
 import monocle.syntax.all.*
 import org.http4s.client.Client
 import org.http4s.ember.hack.EncoderHack
@@ -23,13 +24,48 @@ import smithy4s.xml.Xml
 
 import java.util.Base64
 
-enum Format derives Eq {
+enum FormatKind derives Eq {
   case JSON
   case Protobuf
   case XML
   case SimpleRestJson
 
   def name = productPrefix
+
+  def isJSON = this === JSON
+
+  def toFormat(explicitDefaults: Boolean): Format =
+    this match {
+      case JSON           => Format.JSON(explicitDefaults)
+      case Protobuf       => Format.Protobuf
+      case XML            => Format.XML
+      case SimpleRestJson => Format.SimpleRestJson
+    }
+
+}
+
+enum Format {
+
+  def kind: FormatKind =
+    this match {
+      case JSON(_)        => FormatKind.JSON
+      case Protobuf       => FormatKind.Protobuf
+      case XML            => FormatKind.XML
+      case SimpleRestJson => FormatKind.SimpleRestJson
+    }
+
+  def matches(kind: FormatKind): Boolean = this.kind === kind
+
+  def jsonExplicitDefaults: Option[Boolean] =
+    this match {
+      case JSON(explicitDefaults) => explicitDefaults.some
+      case _                      => None
+    }
+
+  case JSON(explicitDefaults: Boolean)
+  case Protobuf
+  case XML
+  case SimpleRestJson
 
   // todo: look into whether this caches decoders properly
   def decode[A](
@@ -38,9 +74,13 @@ enum Format derives Eq {
     using Schema[A]
   ): IO[Either[String, A]] =
     this match {
-      case JSON =>
+      case JSON(explicitDefaults) =>
         Json
-          .read(Blob(input))
+          .payloadCodecs
+          .configureJsoniterCodecCompiler(_.withExplicitDefaultsEncoding(explicitDefaults))
+          .decoders
+          .fromSchema(summon[Schema[A]])
+          .decode(Blob(input))
           .leftMap(_.toString)
           .pure[IO]
 
@@ -119,9 +159,15 @@ enum Format derives Eq {
     using Schema[A]
   ): IO[String] =
     this match {
-      case JSON =>
+      case JSON(explicitDefaults) =>
         Json
-          .writePrettyString(v)
+          .payloadCodecs
+          .configureJsoniterCodecCompiler(_.withExplicitDefaultsEncoding(explicitDefaults))
+          .withJsoniterWriterConfig(WriterConfig.withIndentionStep(2))
+          .encoders
+          .fromSchema(summon[Schema[A]])
+          .encode(v)
+          .toUTF8String
           .pure[IO]
 
       case Protobuf =>

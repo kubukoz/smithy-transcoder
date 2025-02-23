@@ -2,6 +2,7 @@ import calico.IOWebApp
 import calico.html.HtmlAttr
 import calico.html.io.*
 import calico.html.io.given
+import calico.syntax.*
 import cats.data.OptionT
 import cats.effect.IO
 import cats.effect.kernel.Resource
@@ -11,6 +12,8 @@ import fs2.concurrent.Signal
 import fs2.concurrent.SignallingRef
 import fs2.dom.HtmlDivElement
 import fs2.dom.HtmlElement
+import fs2.dom.Window
+import monocle.Lens
 import smithy.api.Http
 import smithy.api.HttpHeader
 import smithy.api.HttpLabel
@@ -26,15 +29,23 @@ import util.chaining.*
 
 object App extends IOWebApp {
 
-  def render: Resource[IO, HtmlElement[IO]] = Dumper.inBrowser.flatMap { dumper =>
-    div(
-      Dumper
-        .progressBar(dumper),
-      renderMain(
-        using dumper
-      ),
-    )
-  }
+  def render: Resource[IO, HtmlElement[IO]] = Window[IO]
+    .location
+    .search
+    .get
+    .toResource
+    .flatMap {
+      case query if query.contains("remote") => Dumper.liftToSig(Dumper.remote)
+      case _                                 => Dumper.inBrowser
+    }
+    .flatMap { dumperSig =>
+      div(
+        Dumper.progressBar(dumperSig),
+        renderMain(
+          using dumperSig
+        ),
+      )
+    }
 
   def renderMain(
     using dumperSig: DumperSig
@@ -155,17 +166,19 @@ object SampleComponent {
     case class State(
       currentIDL: String,
       currentInput: String,
-      selectedFormat: Format,
+      selectedFormat: FormatKind,
+      jsonExplicitDefaults: Boolean,
     )
 
     object State {
       val init: State = {
-        val initFmt = Format.JSON
+        val initFmt = FormatKind.JSON
 
         new State(
           currentIDL = initModel,
           currentInput = initInput,
           selectedFormat = initFmt,
+          jsonExplicitDefaults = false,
         )
       }
     }
@@ -175,7 +188,11 @@ object SampleComponent {
       state <- SignallingRef[IO].of(State.init).toResource
       currentIDL = state.map(_.currentIDL)
       currentInput = state.map(_.currentInput)
-      format = state.map(_.selectedFormat)
+      formatKind = state.map(_.selectedFormat)
+      format = state.map(s => s.selectedFormat.toFormat(s.jsonExplicitDefaults))
+      jsonExplicitDefaults = state.zoom(
+        Lens[State, Boolean](_.jsonExplicitDefaults)(v => _.copy(jsonExplicitDefaults = v))
+      )
 
       schema <- currentIDL
         .discrete
@@ -221,7 +238,15 @@ object SampleComponent {
                   using vs.s
                 )
                 .flatMap { encoded =>
-                  state.update(_.copy(currentInput = encoded, selectedFormat = fmt))
+                  state.update(s =>
+                    s.copy(
+                      currentInput = encoded,
+                      selectedFormat = fmt.kind,
+                      jsonExplicitDefaults = fmt
+                        .jsonExplicitDefaults
+                        .getOrElse(s.jsonExplicitDefaults),
+                    )
+                  )
                 }
             case Left(_) => IO.unit
           }
@@ -262,7 +287,7 @@ object SampleComponent {
         div(
           styleAttr := "flex: 1",
           form(
-            Format
+            FormatKind
               .values
               .toList
               .map { fmt =>
@@ -274,11 +299,48 @@ object SampleComponent {
                       `type` := "radio",
                       nameAttr := "format",
                       value := fmt.name,
-                      checked <-- format.map(_ === fmt),
-                      onInput(self.value.get.map(Format.valueOf).flatMap(onFormatChange)),
+                      checked <-- format.map(_.matches(fmt)),
+                      onInput(
+                        self
+                          .value
+                          .get
+                          .map(FormatKind.valueOf)
+                          .flatMap { v =>
+                            jsonExplicitDefaults.get.map(v.toFormat(_))
+                          }
+                          .flatMap(onFormatChange)
+                      ),
                       disabled <-- inputErrors.map(_.isDefined),
                     )
                   },
+                  // format-specific config - should be generalized when there are more options like this.
+                  // these vars should modify their own signals only, same with the format change, but the actual format should still be kept in sync
+                  // with the text state, and should be updated by a consumer of a composition of signals (current value + format, desired format, desired format's options).
+                  // that's the only reasonable way to avoid repeating onFormatChange in every click handler.
+                  Option.when(fmt.isJSON)(
+                    label(
+                      styleAttr := "display: block; margin-left: 20px",
+                      "Explicit defaults",
+                      input.withSelf { self =>
+                        (
+                          `type` := "checkbox",
+                          checked <-- jsonExplicitDefaults,
+                          disabled <-- format.map(!_.kind.isJSON),
+                          onInput(
+                            self
+                              .checked
+                              .get
+                              .flatMap { explicitDefaults =>
+                                formatKind
+                                  .get
+                                  .map(_.toFormat(explicitDefaults))
+                                  .flatMap(onFormatChange)
+                              }
+                          ),
+                        )
+                      },
+                    )
+                  ),
                 )
               }
           ),
