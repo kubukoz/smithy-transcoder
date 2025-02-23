@@ -11,6 +11,7 @@ ThisBuild / scalacOptions ++= Seq(
 )
 
 ThisBuild / githubWorkflowPermissions := Some {
+  // https://github.com/typelevel/sbt-typelevel/pull/794
   Permissions.Specify(
     pages = PermissionValue.Write,
     idToken = PermissionValue.Write,
@@ -50,6 +51,22 @@ ThisBuild / githubWorkflowPublish := Seq(
     UseRef.Public("actions", "deploy-pages", "v4")
   ),
 )
+
+ThisBuild / githubWorkflowGeneratedCI ~= {
+  _.map {
+    case job if job.id == "publish" =>
+      job.withEnvironment(
+        Some(
+          JobEnvironment(
+            "github-pages",
+            // https://github.com/typelevel/sbt-typelevel/issues/802
+            Some(new URL("https://kubukoz.github.io/smithy-transcoder")),
+          )
+        )
+      )
+    case job => job
+  }
+}
 
 val smithyDump = project
   .settings(

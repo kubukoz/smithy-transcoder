@@ -97,6 +97,9 @@ jobs:
         os: [ubuntu-22.04]
         java: [temurin@11]
     runs-on: ${{ matrix.os }}
+    environment:
+      name: github-pages
+      url: 'https://kubukoz.github.io/smithy-transcoder'
     steps:
       - name: Checkout current branch (full)
         uses: actions/checkout@v4
