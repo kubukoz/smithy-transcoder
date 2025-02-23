@@ -18,7 +18,7 @@ permissions:
   checks: none
   contents: read
   deployments: none
-  id-token: none
+  id-token: write
   issues: none
   packages: none
   pages: write

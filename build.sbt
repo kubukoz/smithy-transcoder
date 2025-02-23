@@ -16,11 +16,11 @@ ThisBuild / githubWorkflowBuild := Nil
 ThisBuild / githubWorkflowPermissions := Some {
   Permissions.Specify(
     pages = PermissionValue.Write,
+    idToken = PermissionValue.Write,
     actions = PermissionValue.None,
     checks = PermissionValue.None,
     contents = PermissionValue.Read,
     deployments = PermissionValue.None,
-    idToken = PermissionValue.None,
     issues = PermissionValue.None,
     packages = PermissionValue.None,
     pullRequests = PermissionValue.None,
