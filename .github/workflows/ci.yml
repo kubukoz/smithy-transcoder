@@ -70,6 +70,9 @@ jobs:
       - name: Check that workflows are up to date
         run: sbt githubWorkflowCheck
 
+      - name: Build project
+        run: sbt '++ ${{ matrix.scala }}' test
+
       - name: Make target directories
         if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main')
         run: mkdir -p target smithyDump/target smithyDumpApi/target web/target project/target

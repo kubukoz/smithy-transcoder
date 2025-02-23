@@ -10,9 +10,6 @@ ThisBuild / scalacOptions ++= Seq(
   "-Wvalue-discard",
 )
 
-// temporary
-ThisBuild / githubWorkflowBuild := Nil
-
 ThisBuild / githubWorkflowPermissions := Some {
   Permissions.Specify(
     pages = PermissionValue.Write,
