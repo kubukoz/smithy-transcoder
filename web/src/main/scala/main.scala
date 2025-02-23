@@ -50,6 +50,7 @@ object App extends IOWebApp {
   def renderMain(
     using dumperSig: DumperSig
   ): Resource[IO, HtmlElement[IO]] = div(
+    h1("Smithy Transcoder"),
     SampleComponent.make(
       "Struct",
       Schema
