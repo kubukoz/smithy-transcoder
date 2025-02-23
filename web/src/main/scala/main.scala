@@ -167,7 +167,7 @@ object SampleComponent {
     case class State(
       currentIDL: String,
       currentInput: String,
-      selectedFormat: FormatKind,
+      currentFormat: FormatKind,
       jsonExplicitDefaults: Boolean,
     )
 
@@ -178,7 +178,7 @@ object SampleComponent {
         new State(
           currentIDL = initModel,
           currentInput = initInput,
-          selectedFormat = initFmt,
+          currentFormat = initFmt,
           jsonExplicitDefaults = false,
         )
       }
@@ -189,8 +189,8 @@ object SampleComponent {
       state <- SignallingRef[IO].of(State.init).toResource
       currentIDL = state.map(_.currentIDL)
       currentInput = state.map(_.currentInput)
-      formatKind = state.map(_.selectedFormat)
-      format = state.map(s => s.selectedFormat.toFormat(s.jsonExplicitDefaults))
+      formatKind = state.map(_.currentFormat)
+      format = state.map(s => s.currentFormat.toFormat(s.jsonExplicitDefaults))
       jsonExplicitDefaults = state.zoom(
         Lens[State, Boolean](_.jsonExplicitDefaults)(v => _.copy(jsonExplicitDefaults = v))
       )
@@ -242,7 +242,7 @@ object SampleComponent {
                   state.update(s =>
                     s.copy(
                       currentInput = encoded,
-                      selectedFormat = fmt.kind,
+                      currentFormat = fmt.kind,
                       jsonExplicitDefaults = fmt
                         .jsonExplicitDefaults
                         .getOrElse(s.jsonExplicitDefaults),
