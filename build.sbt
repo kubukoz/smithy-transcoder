@@ -38,7 +38,7 @@ ThisBuild / githubWorkflowPublish := Seq(
   ),
   WorkflowStep.Run(List("yarn"), workingDirectory = Some("web")),
   WorkflowStep.Run(
-    List("yarn build --base=/smithy-transcoder"),
+    List("yarn build"),
     workingDirectory = Some("web"),
   ),
   WorkflowStep.Use(

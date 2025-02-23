@@ -140,7 +140,7 @@ jobs:
         run: yarn
 
       - working-directory: web
-        run: yarn build --base=/smithy-transcoder
+        run: yarn build
 
       - uses: actions/upload-pages-artifact@v3
         with:
