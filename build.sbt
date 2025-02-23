@@ -1,3 +1,6 @@
+import org.typelevel.sbt.gha.JobEnvironment
+import org.typelevel.sbt.gha.PermissionValue
+import org.typelevel.sbt.gha.Permissions
 ThisBuild / scalaVersion := "3.6.3"
 ThisBuild / scalacOptions ++= Seq(
   "-no-indent",
@@ -5,6 +8,46 @@ ThisBuild / scalacOptions ++= Seq(
   "-Wunused:all",
   "-Xkind-projector",
   "-Wvalue-discard",
+)
+
+ThisBuild / githubWorkflowPermissions := Some {
+  Permissions.Specify(
+    pages = PermissionValue.Write,
+    actions = PermissionValue.None,
+    checks = PermissionValue.None,
+    contents = PermissionValue.Read,
+    deployments = PermissionValue.None,
+    idToken = PermissionValue.None,
+    issues = PermissionValue.None,
+    packages = PermissionValue.None,
+    pullRequests = PermissionValue.None,
+    repositoryProjects = PermissionValue.None,
+    securityEvents = PermissionValue.None,
+    statuses = PermissionValue.None,
+  )
+}
+
+ThisBuild / githubWorkflowPublish := Seq(
+  WorkflowStep.Sbt(List("smithyDump/assembly")),
+  WorkflowStep.Use(
+    UseRef.Public("actions", "setup-node", "v4"),
+    params = Map(
+      "node-version" -> "20",
+      "cache" -> "yarn",
+    ),
+  ),
+  WorkflowStep.Run(List("yarn"), workingDirectory = Some("web")),
+  WorkflowStep.Run(
+    List("yarn build --base=/smithy-transcoder"),
+    workingDirectory = Some("web"),
+  ),
+  WorkflowStep.Use(
+    UseRef.Public("actions", "upload-pages-artifact", "v3"),
+    params = Map("path" -> "web/dist"),
+  ),
+  WorkflowStep.Use(
+    UseRef.Public("actions", "deploy-pages", "v4")
+  ),
 )
 
 val smithyDump = project
