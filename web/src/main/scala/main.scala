@@ -2,7 +2,6 @@ import calico.IOWebApp
 import calico.html.HtmlAttr
 import calico.html.io.*
 import calico.html.io.given
-import calico.syntax.*
 import cats.data.OptionT
 import cats.effect.IO
 import cats.effect.kernel.Resource
@@ -13,6 +12,7 @@ import fs2.concurrent.SignallingRef
 import fs2.dom.HtmlDivElement
 import fs2.dom.HtmlElement
 import fs2.dom.Window
+import monocle.Focus
 import monocle.Lens
 import smithy.api.Http
 import smithy.api.HttpHeader
@@ -154,6 +154,18 @@ object App extends IOWebApp {
 private val defaultHttpHint = Http(NonEmptyString("POST"), NonEmptyString("/"))
 
 object SampleComponent {
+  import monocle.syntax.all.*
+
+  extension [A](sigref: SignallingRef[IO, A]) {
+
+    inline def lens[B](inline f: Focus.KeywordContext ?=> A => B): SignallingRef[IO, B] =
+      SignallingRef.lens(sigref)(
+        _.focus(f).asInstanceOf[monocle.AppliedLens[A, B]].get,
+        _.focus(f).asInstanceOf[monocle.AppliedLens[A, B]].replace,
+      )
+
+    inline def sig: Signal[IO, A] = sigref
+  }
 
   def make(
     sampleLabel: String,
@@ -167,7 +179,8 @@ object SampleComponent {
     case class State(
       currentIDL: String,
       currentInput: String,
-      currentFormat: FormatKind,
+      readFormatKind: FormatKind,
+      writeFormatKind: FormatKind,
       jsonExplicitDefaults: Boolean,
     )
 
@@ -178,7 +191,8 @@ object SampleComponent {
         new State(
           currentIDL = initModel,
           currentInput = initInput,
-          currentFormat = initFmt,
+          readFormatKind = initFmt,
+          writeFormatKind = initFmt,
           jsonExplicitDefaults = false,
         )
       }
@@ -187,13 +201,15 @@ object SampleComponent {
 
     for {
       state <- SignallingRef[IO].of(State.init).toResource
-      currentIDL = state.map(_.currentIDL)
-      currentInput = state.map(_.currentInput)
-      formatKind = state.map(_.currentFormat)
-      format = state.map(s => s.currentFormat.toFormat(s.jsonExplicitDefaults))
-      jsonExplicitDefaults = state.zoom(
-        Lens[State, Boolean](_.jsonExplicitDefaults)(v => _.copy(jsonExplicitDefaults = v))
-      )
+      currentIDL = state.lens(_.currentIDL)
+      currentInput = state.lens(_.currentInput)
+      jsonExplicitDefaults = state.lens(_.jsonExplicitDefaults)
+
+      readFormatKind = state.lens(_.readFormatKind)
+      readFormat = (readFormatKind.sig, jsonExplicitDefaults.sig).mapN(_.toFormat(_))
+
+      writeFormatKind = state.lens(_.writeFormatKind)
+      writeFormat = (writeFormatKind.sig, jsonExplicitDefaults.sig).mapN(_.toFormat(_))
 
       schema <- currentIDL
         .discrete
@@ -215,7 +231,7 @@ object SampleComponent {
         .holdResource(initSchema.asRight)
 
       currentValueSignal <-
-        (currentInput, format, schema)
+        (currentInput, readFormat, schema)
           .mapN {
             case (input, format, Right(schema: Schema[?])) =>
               format
@@ -230,27 +246,31 @@ object SampleComponent {
           .switchMap(fs2.Stream.eval)
           .hold1Resource
 
-      onFormatChange =
-        (fmt: Format) =>
-          currentValueSignal.get.flatMap {
-            case Right(vs) =>
-              fmt
-                .encode(vs.a)(
-                  using vs.s
-                )
-                .flatMap { encoded =>
-                  state.update(s =>
-                    s.copy(
-                      currentInput = encoded,
-                      currentFormat = fmt.kind,
-                      jsonExplicitDefaults = fmt
-                        .jsonExplicitDefaults
-                        .getOrElse(s.jsonExplicitDefaults),
-                    )
+      _ <-
+        writeFormat
+          .changes
+          .discrete
+          .evalMap { fmt =>
+            currentValueSignal.get.flatMap {
+              case Right(vs) =>
+                fmt
+                  .encode(vs.a)(
+                    using vs.s
                   )
-                }
-            case Left(_) => IO.unit
+                  .flatMap { encoded =>
+                    state.update(s =>
+                      s.copy(
+                        currentInput = encoded,
+                        readFormatKind = fmt.kind,
+                      )
+                    )
+                  }
+              case _ => IO.unit
+            }
           }
+          .compile
+          .drain
+          .background
 
       modelErrors = schema.map(_.swap.toOption.map(_.getMessage))
 
@@ -300,16 +320,13 @@ object SampleComponent {
                       `type` := "radio",
                       nameAttr := "format",
                       value := fmt.name,
-                      checked <-- format.map(_.matches(fmt)),
+                      checked <-- writeFormatKind.map(_ === fmt),
                       onInput(
                         self
                           .value
                           .get
                           .map(FormatKind.valueOf)
-                          .flatMap { v =>
-                            jsonExplicitDefaults.get.map(v.toFormat(_))
-                          }
-                          .flatMap(onFormatChange)
+                          .flatMap(writeFormatKind.set)
                       ),
                       disabled <-- inputErrors.map(_.isDefined),
                     )
@@ -326,17 +343,12 @@ object SampleComponent {
                         (
                           `type` := "checkbox",
                           checked <-- jsonExplicitDefaults,
-                          disabled <-- format.map(!_.kind.isJSON),
+                          disabled <-- writeFormatKind.map(!_.isJSON),
                           onInput(
                             self
                               .checked
                               .get
-                              .flatMap { explicitDefaults =>
-                                formatKind
-                                  .get
-                                  .map(_.toFormat(explicitDefaults))
-                                  .flatMap(onFormatChange)
-                              }
+                              .flatMap(jsonExplicitDefaults.set)
                           ),
                         )
                       },

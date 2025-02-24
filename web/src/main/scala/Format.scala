@@ -44,7 +44,7 @@ enum FormatKind derives Eq {
 
 }
 
-enum Format {
+enum Format derives Eq {
 
   def kind: FormatKind =
     this match {
@@ -53,8 +53,6 @@ enum Format {
       case XML            => FormatKind.XML
       case SimpleRestJson => FormatKind.SimpleRestJson
     }
-
-  def matches(kind: FormatKind): Boolean = this.kind === kind
 
   def jsonExplicitDefaults: Option[Boolean] =
     this match {
