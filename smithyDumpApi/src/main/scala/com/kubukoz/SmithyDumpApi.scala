@@ -15,13 +15,21 @@ object SmithyDumpApi extends IOApp.Simple {
       .withHost(host"0.0.0.0")
       .withHttpApp(
         HttpRoutes
-          .of[IO] { case req @ POST -> Root / "api" / "dump" =>
-            req.bodyText.compile.string.flatMap { input =>
-              IO(SmithyDump.dump(input)).attempt.flatMap {
-                case Right(v) => Ok(v)
-                case Left(e)  => InternalServerError(e.getMessage())
+          .of[IO] {
+            case req @ POST -> Root / "api" / "dump" =>
+              req.bodyText.compile.string.flatMap { input =>
+                IO(SmithyDump.dump(input)).attempt.flatMap {
+                  case Right(v) => Ok(v)
+                  case Left(e)  => InternalServerError(e.getMessage())
+                }
               }
-            }
+            case req @ POST -> Root / "api" / "format" =>
+              req.bodyText.compile.string.flatMap { input =>
+                IO(SmithyDump.format(input)).attempt.flatMap {
+                  case Right(v) => Ok(v)
+                  case Left(e)  => InternalServerError(e.getMessage())
+                }
+              }
           }
           .orNotFound
       )

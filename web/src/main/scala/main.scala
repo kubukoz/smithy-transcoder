@@ -42,13 +42,13 @@ object App extends IOWebApp {
       div(
         Dumper.progressBar(dumperSig),
         renderMain(
-          using dumperSig
+          using dumperSig.map(_.toOption)
         ),
       )
     }
 
   def renderMain(
-    using dumperSig: DumperSig
+    using dumperSig: DumperOptionSig
   ): Resource[IO, HtmlElement[IO]] = div(
     h1("Smithy Transcoder"),
     SampleComponent.make(
@@ -173,7 +173,7 @@ object SampleComponent {
     initModel: String,
     initInput: String,
   )(
-    using DumperSig
+    using DumperOptionSig
   ): Resource[IO, HtmlElement[IO]] = {
 
     /** The read format is the one used for decoding the input, the write format is the one used for
@@ -212,6 +212,9 @@ object SampleComponent {
 
     for {
       state <- SignallingRef[IO].of(State.init).toResource
+
+      dumperOption = summon[DumperOptionSig]
+
       currentIDL = state.lens(_.currentIDL)
       currentInput = state.lens(_.currentInput)
       jsonExplicitDefaults = state.lens(_.jsonExplicitDefaults)
@@ -222,21 +225,18 @@ object SampleComponent {
       writeFormatKind = state.lens(_.writeFormatKind)
       writeFormat = (writeFormatKind.sig, jsonExplicitDefaults.sig).mapN(_.toFormat(_))
 
-      schema <- currentIDL
+      schema <- (currentIDL.changes, dumperOption)
+        .tupled
         .discrete
-        .changes
-        .switchMap { idl =>
-          fs2.Stream.eval(summon[DumperSig].get).flatMap {
-            case Dumper.State.Loaded(dumper) =>
-              fs2
-                .Stream
-                .eval(
-                  buildNewSchema(idl)(
-                    using dumper
-                  ).attempt
-                )
-            case _ => fs2.Stream.empty
-          }
+        .switchMap {
+          case (idl, Some(dumper)) =>
+            fs2
+              .Stream
+              .eval(
+                buildNewSchema(idl, dumper).attempt
+              )
+
+          case _ => fs2.Stream.empty
         }
         // for offline / jvmless mode, general "instantness"
         .holdResource(initSchema.asRight)
@@ -262,6 +262,8 @@ object SampleComponent {
           .changes
           .discrete
           .evalMap { fmt =>
+            // we only want to run this when the format changes, and not when the current value changes...
+            // so we read the CV manually with .get rather than zipping the signals.
             currentValueSignal.get.flatMap {
               case Right(vs) =>
                 fmt
@@ -287,14 +289,35 @@ object SampleComponent {
 
       modelSourceBlock = div(
         styleAttr := "display: flex; flex-direction:column; flex: 2; overflow: auto",
+        div(
+          button(
+            "Format code",
+            disabled <-- (dumperOption.map(_.isEmpty), modelErrors.map(_.isDefined)).mapN(_ || _),
+            onClick --> {
+              _.switchMap { _ =>
+                (currentIDL, dumperOption)
+                  .tupled
+                  .get
+                  .flatMap {
+                    case (text, Some(dumper)) =>
+                      dumper
+                        .format(text)
+                        .flatMap(currentIDL.set)
+                        // we don't need to update anything or show errors here
+                        // because if your formatting fails, you'll see it in the model errors.
+                        // still, to give users a way to report if this still fails, we'll log it.
+                        .handleErrorWith(IO.consoleForIO.printStackTrace)
+                    case _ => IO.unit
+                  }
+                  .pipe(fs2.Stream.exec)
+              }
+            },
+          )
+        ),
         textArea.withSelf { self =>
           (
-            styleAttr := "flex: 1;min-height: 150px;",
-            disabled <-- summon[DumperSig].map {
-              case Dumper.State.Loaded(_) => false
-              case _                      => true
-            },
-            // disabled := true,
+            styleAttr := "flex: 1; min-height: 150px;",
+            disabled <-- dumperOption.map(_.isEmpty),
             onInput(
               self.value.get.flatMap(idl => state.update(_.copy(currentIDL = idl)))
             ),
@@ -399,9 +422,8 @@ object SampleComponent {
 }
 
 private def buildNewSchema(
-  idl: String
-)(
-  using dumper: Dumper
+  idl: String,
+  dumper: Dumper,
 ): IO[Schema[?]] = dumper
   .dump(idl)
   .flatMap { newModelJson =>
