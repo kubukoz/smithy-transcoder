@@ -271,6 +271,8 @@ object SampleComponent {
                     using vs.s
                   )
                   .flatMap { encoded =>
+                    // these could in theory happen separately,
+                    // but it might cause glitches in rendering due to how `currentValue` gets computed.
                     state.update(s =>
                       s.copy(
                         currentInput = encoded,
@@ -319,7 +321,7 @@ object SampleComponent {
             styleAttr := "flex: 1; min-height: 150px;",
             disabled <-- dumperOption.map(_.isEmpty),
             onInput(
-              self.value.get.flatMap(idl => state.update(_.copy(currentIDL = idl)))
+              self.value.get.flatMap(currentIDL.set)
             ),
             value <-- currentIDL,
           )
@@ -377,7 +379,7 @@ object SampleComponent {
                         (
                           `type` := "checkbox",
                           checked <-- jsonExplicitDefaults,
-                          disabled <-- writeFormatKind.map(!_.usesExplicitDefaults),
+                          disabled <-- writeFormatKind.map(_ =!= fmt),
                           onInput(
                             self
                               .checked
@@ -394,7 +396,7 @@ object SampleComponent {
           textArea.withSelf { self =>
             (
               value <-- currentInput,
-              onInput(self.value.get.flatMap(v => state.update(_.copy(currentInput = v)))),
+              onInput(self.value.get.flatMap(currentInput.set)),
               rows := 7,
               styleAttr := "width:300px",
             )
