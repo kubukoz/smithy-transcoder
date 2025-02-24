@@ -388,6 +388,10 @@ object SampleComponent {
                           ),
                         )
                       },
+                      a(
+                        small("(what is this?)"),
+                        href := "https://disneystreaming.github.io/smithy4s/docs/protocols/simple-rest-json/overview#explicit-null-encoding",
+                      ),
                     )
                   ),
                 )
