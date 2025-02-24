@@ -16,5 +16,5 @@ Possible improvements for the future:
 - Automatically updating the content-length header in HTTP requests
 - UI cleanup
 - Embedding in Smithy4s documentation
-- Code formatting
+- ~~Code formatting~~ (done)
 - Textarea replacement (Codemirror, Monaco, etc.)
