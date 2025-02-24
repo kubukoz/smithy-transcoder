@@ -176,6 +176,17 @@ object SampleComponent {
     using DumperSig
   ): Resource[IO, HtmlElement[IO]] = {
 
+    /** The read format is the one used for decoding the input, the write format is the one used for
+      * updating it. The reason why there's two of them: the write format is controlled directly by
+      * the user, and there's a background fiber that updates the input and sets the new read
+      * format. Basically, "currentInput" must've been written by either the write format, or the
+      * user's input.
+      *
+      * This prevents any strange behavior that could arise from missing a format update event (as
+      * signal.discrete can drop them), causing inconsistent state and strange concurrency bugs.
+      *
+      * Credit to Arman Bilge for suggesting this approach on Discord!
+      */
     case class State(
       currentIDL: String,
       currentInput: String,
