@@ -346,7 +346,7 @@ object SampleComponent {
                   // these vars should modify their own signals only, same with the format change, but the actual format should still be kept in sync
                   // with the text state, and should be updated by a consumer of a composition of signals (current value + format, desired format, desired format's options).
                   // that's the only reasonable way to avoid repeating onFormatChange in every click handler.
-                  Option.when(fmt.isJSON)(
+                  Option.when(fmt.usesExplicitDefaults)(
                     label(
                       styleAttr := "display: block; margin-left: 20px",
                       "Explicit defaults",
@@ -354,7 +354,7 @@ object SampleComponent {
                         (
                           `type` := "checkbox",
                           checked <-- jsonExplicitDefaults,
-                          disabled <-- writeFormatKind.map(!_.isJSON),
+                          disabled <-- writeFormatKind.map(!_.usesExplicitDefaults),
                           onInput(
                             self
                               .checked

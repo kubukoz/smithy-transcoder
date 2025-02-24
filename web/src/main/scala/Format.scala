@@ -32,14 +32,18 @@ enum FormatKind derives Eq {
 
   def name = productPrefix
 
-  def isJSON = this === JSON
+  def usesExplicitDefaults =
+    this match {
+      case JSON | SimpleRestJson => true
+      case _                     => false
+    }
 
   def toFormat(explicitDefaults: Boolean): Format =
     this match {
       case JSON           => Format.JSON(explicitDefaults)
       case Protobuf       => Format.Protobuf
       case XML            => Format.XML
-      case SimpleRestJson => Format.SimpleRestJson
+      case SimpleRestJson => Format.SimpleRestJson(explicitDefaults)
     }
 
 }
@@ -48,10 +52,10 @@ enum Format derives Eq {
 
   def kind: FormatKind =
     this match {
-      case JSON(_)        => FormatKind.JSON
-      case Protobuf       => FormatKind.Protobuf
-      case XML            => FormatKind.XML
-      case SimpleRestJson => FormatKind.SimpleRestJson
+      case JSON(_)           => FormatKind.JSON
+      case Protobuf          => FormatKind.Protobuf
+      case XML               => FormatKind.XML
+      case SimpleRestJson(_) => FormatKind.SimpleRestJson
     }
 
   def jsonExplicitDefaults: Option[Boolean] =
@@ -63,7 +67,7 @@ enum Format derives Eq {
   case JSON(explicitDefaults: Boolean)
   case Protobuf
   case XML
-  case SimpleRestJson
+  case SimpleRestJson(explicitDefaults: Boolean)
 
   // todo: look into whether this caches decoders properly
   def decode[A](
@@ -104,12 +108,13 @@ enum Format derives Eq {
           .leftMap(_.toString)
           .pure[IO]
 
-      case SimpleRestJson =>
+      case SimpleRestJson(explicitDefaults) =>
         val svc = Format.mkFakeService[A]
 
         Deferred[IO, Either[String, A]]
           .flatMap { deff =>
             val send = SimpleRestJsonBuilder
+              .withExplicitDefaultsEncoding(explicitDefaults)
               .routes(
                 svc.fromPolyFunction(
                   new PolyFunction5[[I, _, _, _, _] =>> I, smithy4s.kinds.Kind1[IO]#toKind5] {
@@ -184,12 +189,15 @@ enum Format derives Eq {
           .toUTF8String
           .pure[IO]
 
-      case SimpleRestJson =>
+      case SimpleRestJson(explicitDefaults) =>
         val svc = Format.mkFakeService[A]
 
         IO.deferred[String]
           .flatMap { deff =>
-            SimpleRestJsonBuilder(svc)
+            SimpleRestJsonBuilder
+              .withExplicitDefaultsEncoding(explicitDefaults)
+              .withMaxArity(Int.MaxValue)
+              .apply(svc)
               .client(
                 Client[IO] { req =>
                   (EncoderHack
