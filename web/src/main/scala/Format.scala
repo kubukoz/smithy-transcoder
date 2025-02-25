@@ -202,6 +202,7 @@ enum Format derives Eq {
                 Client[IO] { req =>
                   (EncoderHack
                     .requestToString(req)
+                    .map(_.replace("\r\n", "\n"))
                     .flatMap(deff.complete) *> IO.raiseError(
                     new Exception("encoding error in fake client")
                   )).toResource
