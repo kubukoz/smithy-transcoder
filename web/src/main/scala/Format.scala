@@ -17,6 +17,7 @@ import smithy4s.ShapeId
 import smithy4s.http4s.SimpleRestJsonBuilder
 import smithy4s.json.Json
 import smithy4s.kinds.PolyFunction5
+import smithy4s.schema.FieldFilter
 import smithy4s.schema.OperationSchema
 import smithy4s.schema.Schema
 import smithy4s.schema.Schema.StructSchema
@@ -79,7 +80,13 @@ enum Format derives Eq {
       case JSON(explicitDefaults) =>
         Json
           .payloadCodecs
-          .configureJsoniterCodecCompiler(_.withExplicitDefaultsEncoding(explicitDefaults))
+          .configureJsoniterCodecCompiler {
+            _.withFieldFilter(
+              if explicitDefaults then FieldFilter.EncodeAll
+              else
+                FieldFilter.Default
+            )
+          }
           .decoders
           .fromSchema(summon[Schema[A]])
           .decode(Blob(input))
@@ -114,7 +121,11 @@ enum Format derives Eq {
         Deferred[IO, Either[String, A]]
           .flatMap { deff =>
             val send = SimpleRestJsonBuilder
-              .withExplicitDefaultsEncoding(explicitDefaults)
+              .withFieldFilter(
+                if explicitDefaults then FieldFilter.EncodeAll
+                else
+                  FieldFilter.Default
+              )
               .routes(
                 svc.fromPolyFunction(
                   new PolyFunction5[[I, _, _, _, _] =>> I, smithy4s.kinds.Kind1[IO]#toKind5] {
@@ -165,7 +176,13 @@ enum Format derives Eq {
       case JSON(explicitDefaults) =>
         Json
           .payloadCodecs
-          .configureJsoniterCodecCompiler(_.withExplicitDefaultsEncoding(explicitDefaults))
+          .configureJsoniterCodecCompiler {
+            _.withFieldFilter(
+              if explicitDefaults then FieldFilter.EncodeAll
+              else
+                FieldFilter.Default
+            )
+          }
           .withJsoniterWriterConfig(WriterConfig.withIndentionStep(2))
           .encoders
           .fromSchema(summon[Schema[A]])
@@ -195,7 +212,11 @@ enum Format derives Eq {
         IO.deferred[String]
           .flatMap { deff =>
             SimpleRestJsonBuilder
-              .withExplicitDefaultsEncoding(explicitDefaults)
+              .withFieldFilter(
+                if explicitDefaults then FieldFilter.EncodeAll
+                else
+                  FieldFilter.Default
+              )
               .withMaxArity(Int.MaxValue)
               .apply(svc)
               .client(
