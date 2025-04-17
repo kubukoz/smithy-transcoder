@@ -14,6 +14,7 @@ import fs2.dom.HtmlElement
 import fs2.dom.Window
 import monocle.Focus
 import monocle.Lens
+import org.scalajs.dom.HTMLTextAreaElement
 import smithy.api.Http
 import smithy.api.HttpHeader
 import smithy.api.HttpLabel
@@ -403,6 +404,44 @@ object SampleComponent {
               onInput(self.value.get.flatMap(currentInput.set)),
               rows := 7,
               styleAttr := "width:300px",
+              currentInput
+                .changes
+                .discrete
+                .map { s =>
+                  val pattern = """(?s)(.+Content-Length: )\d+(.+)""".r
+                  val newText = pattern.replaceAllIn(
+                    s,
+                    m => {
+                      val actualContentLength = s.split("\n\n").last.length
+                      m.group(1) + actualContentLength + m.group(2)
+                    },
+                  )
+
+                  Option.when(newText != s)(newText)
+                }
+                .unNone
+                .foreach { newValue =>
+                  val ta = self.asInstanceOf[HTMLTextAreaElement]
+                  val currentSelectionStart = ta.selectionStart
+
+                  currentInput.set(newValue) *>
+                    // wait for textarea and its cursor to update
+                    IO.cede *>
+                    // todo: when we run this, the text could've changed already.
+                    // if it's different, chances are the user has simply appended some text and that could be added before the cursor position (and then the cursor can be shifted)
+                    // but there's no guarantee that we can run all that without ceding...
+                    // probably should just move the content-length to a separate input.
+                    IO(
+                      ta.setSelectionRange(
+                        currentSelectionStart,
+                        currentSelectionStart,
+                      )
+                    )
+                }
+                .compile
+                .drain
+                .background
+                .void,
             )
           },
           div(
