@@ -71,9 +71,9 @@ ThisBuild / githubWorkflowGeneratedCI ~= {
 val smithyDump = project
   .settings(
     libraryDependencies ++= Seq(
-      "software.amazon.smithy" % "smithy-model" % "1.54.0",
-      "software.amazon.smithy" % "smithy-syntax" % "1.54.0",
-      "com.disneystreaming.alloy" % "alloy-core" % "0.3.14",
+      "software.amazon.smithy" % "smithy-model" % "1.57.1",
+      "software.amazon.smithy" % "smithy-syntax" % "1.57.1",
+      "com.disneystreaming.alloy" % "alloy-core" % "0.3.19",
     ),
     autoScalaLibrary := false,
     javacOptions ++= Seq(
