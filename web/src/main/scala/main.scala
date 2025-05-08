@@ -19,6 +19,7 @@ import smithy.api.HttpHeader
 import smithy.api.HttpLabel
 import smithy.api.NonEmptyString
 import smithy4s.Blob
+import smithy4s.Document
 import smithy4s.Hints
 import smithy4s.ShapeId
 import smithy4s.dynamic.DynamicSchemaIndex
@@ -257,6 +258,12 @@ object SampleComponent {
           .switchMap(fs2.Stream.eval)
           .hold1Resource
 
+      canonicalValueSignal = currentValueSignal.map {
+        _.map { vws =>
+          Document.Encoder.fromSchema(vws.s).encode(vws.a)
+        }.fold(_ => "-", _.show)
+      }
+
       _ <-
         writeFormat
           .changes
@@ -292,6 +299,7 @@ object SampleComponent {
       modelSourceBlock = div(
         styleAttr := "display: flex; flex-direction:column; flex: 2; overflow: auto",
         div(
+          h3("Schema"),
           button(
             "Format code",
             disabled <-- (dumperOption.map(_.isEmpty), modelErrors.map(_.isDefined)).mapN(_ || _),
@@ -314,7 +322,7 @@ object SampleComponent {
                   .pipe(fs2.Stream.exec)
               }
             },
-          )
+          ),
         ),
         textArea.withSelf { self =>
           (
@@ -340,9 +348,10 @@ object SampleComponent {
       inputErrors = currentValueSignal.map(_.swap.toOption)
 
       inputView = div(
-        styleAttr := """display: flex; flex: 3""".stripMargin,
+        styleAttr := """display: flex; flex: 1""".stripMargin,
         div(
           styleAttr := "flex: 1",
+          h3("Format & input"),
           form(
             FormatKind
               .values
@@ -414,12 +423,21 @@ object SampleComponent {
         ),
       )
 
+      canonicalReprView <- div(
+        styleAttr := "display: flex; flex: 3",
+        div(
+          h3("Document representation"),
+          pre(code(canonicalValueSignal)),
+        ),
+      )
+
       e <- div(
         h2(sampleLabel),
         div(
           styleAttr := "display: flex; gap: 20px",
           modelSourceBlock,
           inputView,
+          canonicalReprView,
         ),
       )
     } yield e
