@@ -9,7 +9,6 @@ import facades.JavaException
 import fs2.concurrent.Signal
 import fs2.concurrent.SignallingRef
 import fs2.dom.HtmlElement
-import monocle.syntax.all.*
 import org.scalajs.dom.Fetch
 import org.scalajs.dom.HttpMethod
 import org.scalajs.dom.RequestInit

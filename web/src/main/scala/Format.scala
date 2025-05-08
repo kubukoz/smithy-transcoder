@@ -5,7 +5,6 @@ import cats.effect.kernel.Deferred
 import cats.kernel.Eq
 import cats.syntax.all.*
 import com.github.plokhotnyuk.jsoniter_scala.core.WriterConfig
-import monocle.syntax.all.*
 import org.http4s.client.Client
 import org.http4s.ember.hack.EncoderHack
 import smithy.api.Http
@@ -263,7 +262,7 @@ object Format {
                   .struct[A](other.required[A]("body", identity).addHints(HttpPayload()))(identity)
             })
             .withHints(
-              summon[Schema[A]].hints.get(Http).map(a => a: Hints.Binding).toList*
+              summon[Schema[A]].hints.get[Http].map(a => a: Hints.Binding).toList*
             )
           def wrap(input: A): Op[A, Nothing, Unit, Nothing, Nothing] = input
         }
