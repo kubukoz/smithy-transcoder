@@ -37,6 +37,7 @@ object App extends IOWebApp {
     }
     .flatMap { dumperSig =>
       div(
+        styleAttr := "padding: 20px;",
         Dumper.progressBar(dumperSig),
         renderMain(
           using dumperSig.map(_.toOption)
@@ -185,13 +186,12 @@ object App extends IOWebApp {
               ),
             )
           },
-        ),
-        SampleComponent.make(
-          defaultExample.name,
-          initSchema = defaultSchema,
-          initInput = defaultExample.input,
-          initModel = defaultExample.model,
-          externalUpdates = exampleChoice.stream.map(_.toSampleComponentInput),
+          SampleComponent.make(
+            initSchema = defaultSchema,
+            initInput = defaultExample.input,
+            initModel = defaultExample.model,
+            externalUpdates = exampleChoice.stream.map(_.toSampleComponentInput),
+          ),
         ),
       )
     } yield e
@@ -217,7 +217,6 @@ object SampleComponent {
   case class ExternalUpdate(model: String, input: String)
 
   def make(
-    sampleLabel: String,
     initSchema: Schema[?],
     initModel: String,
     initInput: String,
@@ -356,7 +355,7 @@ object SampleComponent {
       modelErrors = schema.map(_.swap.toOption.map(_.getMessage))
 
       modelSourceBlock = div(
-        styleAttr := "display: flex; flex-direction:column; flex: 2; overflow: auto",
+        styleAttr := "display: flex; flex-direction:column; flex: 1; overflow: auto",
         div(
           h3("Schema"),
           button(
@@ -407,97 +406,83 @@ object SampleComponent {
       inputErrors = currentValueSignal.map(_.swap.toOption)
 
       inputView = div(
-        styleAttr := """display: flex; flex: 1""".stripMargin,
-        div(
-          styleAttr := "flex: 1",
-          h3("Format & input"),
-          form(
-            FormatKind
-              .values
-              .toList
-              .map { fmt =>
-                label(
-                  styleAttr := "display:block",
-                  fmt.name,
-                  input.withSelf { self =>
-                    (
-                      `type` := "radio",
-                      nameAttr := "format",
-                      value := fmt.name,
-                      checked <-- writeFormatKind.map(_ === fmt),
-                      onInput(
-                        self
-                          .value
-                          .get
-                          .map(FormatKind.valueOf)
-                          .flatMap(writeFormatKind.set)
-                      ),
-                      disabled <-- inputErrors.map(_.isDefined),
-                    )
-                  },
-                  // format-specific config - should be generalized when there are more options like this.
-                  // these vars should modify their own signals only, same with the format change, but the actual format should still be kept in sync
-                  // with the text state, and should be updated by a consumer of a composition of signals (current value + format, desired format, desired format's options).
-                  // that's the only reasonable way to avoid repeating onFormatChange in every click handler.
-                  Option.when(fmt.usesExplicitDefaults)(
-                    label(
-                      styleAttr := "display: block; margin-left: 20px",
-                      "Explicit defaults",
-                      input.withSelf { self =>
-                        (
-                          `type` := "checkbox",
-                          checked <-- jsonExplicitDefaults,
-                          disabled <-- writeFormatKind.map(_ =!= fmt),
-                          onInput(
-                            self
-                              .checked
-                              .get
-                              .flatMap(jsonExplicitDefaults.set)
-                          ),
-                        )
-                      },
-                      a(
-                        small("(what is this?)"),
-                        href := "https://disneystreaming.github.io/smithy4s/docs/protocols/simple-rest-json/overview#explicit-null-encoding",
-                      ),
-                    )
-                  ),
-                )
-              }
-          ),
-          textArea.withSelf { self =>
-            (
-              value <-- currentInput,
-              onInput(self.value.get.flatMap(currentInput.set)),
-              rows := 7,
-              styleAttr := "width:300px",
-            )
-          },
-          div(
-            pre(
-              styleAttr := "text-wrap:wrap",
-              code(styleAttr := "color: #aa0000", inputErrors),
-            )
-          ),
+        styleAttr := """display: flex; flex-direction: column; flex: 1; overflow: auto""".stripMargin,
+        h3("Format & input"),
+        form(
+          FormatKind
+            .values
+            .toList
+            .map { fmt =>
+              label(
+                styleAttr := "display:block",
+                fmt.name,
+                input.withSelf { self =>
+                  (
+                    `type` := "radio",
+                    nameAttr := "format",
+                    value := fmt.name,
+                    checked <-- writeFormatKind.map(_ === fmt),
+                    onInput(
+                      self
+                        .value
+                        .get
+                        .map(FormatKind.valueOf)
+                        .flatMap(writeFormatKind.set)
+                    ),
+                    disabled <-- inputErrors.map(_.isDefined),
+                  )
+                },
+                // format-specific config - should be generalized when there are more options like this.
+                // these vars should modify their own signals only, same with the format change, but the actual format should still be kept in sync
+                // with the text state, and should be updated by a consumer of a composition of signals (current value + format, desired format, desired format's options).
+                // that's the only reasonable way to avoid repeating onFormatChange in every click handler.
+                Option.when(fmt.usesExplicitDefaults)(
+                  label(
+                    styleAttr := "display: block; margin-left: 20px",
+                    "Explicit defaults",
+                    input.withSelf { self =>
+                      (
+                        `type` := "checkbox",
+                        checked <-- jsonExplicitDefaults,
+                        disabled <-- writeFormatKind.map(_ =!= fmt),
+                        onInput(
+                          self
+                            .checked
+                            .get
+                            .flatMap(jsonExplicitDefaults.set)
+                        ),
+                      )
+                    },
+                    a(
+                      small("(what is this?)"),
+                      href := "https://disneystreaming.github.io/smithy4s/docs/protocols/simple-rest-json/overview#explicit-null-encoding",
+                    ),
+                  )
+                ),
+              )
+            }
         ),
-      )
-
-      canonicalReprView = div(
-        styleAttr := "display: flex; flex: 3",
+        textArea.withSelf { self =>
+          (
+            value <-- currentInput,
+            onInput(self.value.get.flatMap(currentInput.set)),
+            rows := 7,
+          )
+        },
         div(
-          h3("Document representation"),
-          pre(code(canonicalValueSignal)),
+          pre(
+            styleAttr := "text-wrap:wrap",
+            code(styleAttr := "color: #aa0000", inputErrors),
+          )
         ),
+        h3("Document representation"),
+        pre(code(canonicalValueSignal)),
       )
 
       e <- div(
-        h2(sampleLabel),
-        div(
-          styleAttr := "display: flex; gap: 20px",
-          modelSourceBlock,
-          inputView,
-          canonicalReprView,
-        ),
+        styleAttr := "display: flex; gap: 20px",
+        modelSourceBlock,
+        inputView,
       )
     } yield e
   }
