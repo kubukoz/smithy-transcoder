@@ -1,5 +1,4 @@
 import calico.IOWebApp
-import calico.html.HtmlAttr
 import calico.html.io.*
 import calico.html.io.given
 import cats.data.OptionT
@@ -7,21 +6,18 @@ import cats.effect.IO
 import cats.effect.kernel.Resource
 import cats.kernel.Eq
 import cats.syntax.all.*
+import fs2.concurrent.Channel
 import fs2.concurrent.Signal
 import fs2.concurrent.SignallingRef
-import fs2.dom.HtmlDivElement
 import fs2.dom.HtmlElement
 import fs2.dom.Window
 import monocle.Focus
 import monocle.Lens
 import smithy.api.Http
-import smithy.api.HttpHeader
-import smithy.api.HttpLabel
 import smithy.api.NonEmptyString
 import smithy4s.Blob
 import smithy4s.Document
 import smithy4s.Hints
-import smithy4s.ShapeId
 import smithy4s.dynamic.DynamicSchemaIndex
 import smithy4s.dynamic.model.Model
 import smithy4s.json.Json
@@ -48,18 +44,23 @@ object App extends IOWebApp {
       )
     }
 
-  def renderMain(
-    using dumperSig: DumperOptionSig
-  ): Resource[IO, HtmlElement[IO]] = div(
-    h1("Smithy Transcoder"),
-    SampleComponent.make(
-      "Struct",
-      Schema
-        .tuple(Schema.string, Schema.int)
-        .withId("demo", "Struct")
-        .toHttpInputSchema,
-      initInput = """{"_1": "foo", "_2": 42}""",
-      initModel =
+  case class Example(
+    name: String,
+    model: String,
+    input: String,
+  ) {
+
+    def toSampleComponentInput: SampleComponent.ExternalUpdate = SampleComponent.ExternalUpdate(
+      model = model,
+      input = input,
+    )
+
+  }
+
+  val examples = List(
+    Example(
+      name = "Struct",
+      model =
         """$version: "2"
           |
           |namespace demo
@@ -69,21 +70,22 @@ object App extends IOWebApp {
           |  @required _2: Integer
           |}
           |""".stripMargin,
+      input = """{"_1": "foo", "_2": 42}""",
     ),
-    SampleComponent.make(
-      "HTTP input",
-      Schema
-        .struct[(String, String, String)](
-          Schema.string.required[(String, String, String)]("id", _._1).addHints(HttpLabel()),
-          Schema
-            .string
-            .required[(String, String, String)]("name", _._2)
-            .addHints(HttpHeader("x-name")),
-          Schema.string.required[(String, String, String)]("details", _._3),
-        )(Tuple3.apply)
-        .addHints(Http(NonEmptyString("PUT"), NonEmptyString("/data/{id}"))),
-      initInput = """{"id": "foo", "name": "bar", "details": "baz"}""",
-      initModel =
+    Example(
+      name = "String",
+      model =
+        """$version: "2"
+          |
+          |namespace demo
+          |
+          |string String
+          |""".stripMargin,
+      input = """"foo"""",
+    ),
+    Example(
+      name = "HTTP input",
+      model =
         """$version: "2"
           |namespace demo
           |
@@ -101,29 +103,11 @@ object App extends IOWebApp {
           |  }
           |}
       """.stripMargin,
+      input = """{"id": "foo", "name": "bar", "details": "baz"}""",
     ),
-    SampleComponent.make(
-      "String",
-      Schema
-        .string
-        .toHttpInputSchema,
-      initInput = """"foo"""",
-      initModel =
-        """$version: "2"
-          |
-          |namespace demo
-          |
-          |string String
-          |""".stripMargin,
-    ),
-    SampleComponent.make(
-      "Union",
-      Schema
-        .either(Schema.string, Schema.int)
-        .withId("demo", "Union")
-        .toHttpInputSchema,
-      initInput = """{"left": "hello"}""",
-      initModel =
+    Example(
+      name = "Union",
+      model =
         """$version: "2"
           |
           |namespace demo
@@ -133,22 +117,84 @@ object App extends IOWebApp {
           |  right: Integer
           |}
           |""".stripMargin,
+      input = """{"left": "hello"}""",
     ),
-    SampleComponent.make(
-      "Document",
-      Schema
-        .document
-        .toHttpInputSchema,
-      initInput = """{"foo": "bar"}""",
-      initModel =
+    Example(
+      name = "Document",
+      model =
         """$version: "2"
           |
           |namespace demo
           |
           |document Document
           |""".stripMargin,
+      input = """{"foo": "bar"}""",
+    ),
+    Example(
+      name = "Open union",
+      model =
+        """$version: "2"
+          |
+          |namespace demo
+          |
+          |use alloy#jsonUnknown
+          |
+          |union MyOpenUnion {
+          |  s1: Unit
+          |  s2: Unit
+          |  @jsonUnknown other: Document
+          |}
+          |""".stripMargin,
+      input = """{"whatisthis": "a string, clearly"}""",
     ),
   )
+
+  val defaultExample = examples.groupBy(_.name)("Struct").head
+
+  val defaultSchema =
+    Schema
+      .tuple(Schema.string, Schema.int)
+      .withId("demo", "Struct")
+      .toHttpInputSchema
+
+  def renderMain(
+    using dumperSig: DumperOptionSig
+  ): Resource[IO, HtmlElement[IO]] =
+    for {
+      exampleChoice <- Channel.synchronous[IO, Example].toResource
+
+      e <- div(
+        h1("Smithy Transcoder"),
+        div(
+          "Load example: ",
+          select.withSelf { self =>
+            (
+              disabled <-- dumperSig.map(_.isEmpty),
+              examples.map { e =>
+                option(
+                  value := e.name,
+                  e.name,
+                )
+              },
+              onInput(
+                self.value.get.flatMap { choice =>
+                  exampleChoice
+                    .send(examples.find(_.name === choice).get)
+                    .void
+                }
+              ),
+            )
+          },
+        ),
+        SampleComponent.make(
+          defaultExample.name,
+          initSchema = defaultSchema,
+          initInput = defaultExample.input,
+          initModel = defaultExample.model,
+          externalUpdates = exampleChoice.stream.map(_.toSampleComponentInput),
+        ),
+      )
+    } yield e
 
 }
 
@@ -168,11 +214,14 @@ object SampleComponent {
     inline def sig: Signal[IO, A] = sigref
   }
 
+  case class ExternalUpdate(model: String, input: String)
+
   def make(
     sampleLabel: String,
     initSchema: Schema[?],
     initModel: String,
     initInput: String,
+    externalUpdates: fs2.Stream[IO, ExternalUpdate],
   )(
     using DumperOptionSig
   ): Resource[IO, HtmlElement[IO]] = {
@@ -289,6 +338,16 @@ object SampleComponent {
                   }
               case _ => IO.unit
             }
+          }
+          .compile
+          .drain
+          .background
+
+      _ <-
+        externalUpdates
+          .evalMap { update =>
+            currentIDL.set(update.model) *>
+              currentInput.set(update.input)
           }
           .compile
           .drain
@@ -423,7 +482,7 @@ object SampleComponent {
         ),
       )
 
-      canonicalReprView <- div(
+      canonicalReprView = div(
         styleAttr := "display: flex; flex: 3",
         div(
           h3("Document representation"),
@@ -470,7 +529,7 @@ private def buildNewSchema(
         .filterNot(_.namespace.startsWith("alloy"))
         .match {
           case one :: Nil => IO.pure(one)
-          case other =>
+          case _ =>
             IO.raiseError(
               new Exception("expected exactly one schema - current app limitation")
             )
@@ -488,14 +547,14 @@ private def buildNewSchema(
         .match {
           case Nil        => IO.pure(None)
           case one :: Nil => IO.pure(one.service.some)
-          case more =>
+          case _ =>
             IO.raiseError(new Exception("expected up to one service - current app limitation"))
         }
         .pipe(OptionT(_))
         .map(_.endpoints.toList)
         .semiflatMap {
           case e :: Nil => IO.pure(e)
-          case other =>
+          case _ =>
             IO.raiseError(new Exception("expected exactly one endpoint - current app limitation"))
         }
         .value
@@ -505,7 +564,7 @@ private def buildNewSchema(
     (input, op).mapN {
       case (input, None) => input.toHttpInputSchema
       case (input, Some(op)) =>
-        input.addHints(op.hints.get(Http).toList.map(h => h: Hints.Binding)*)
+        input.addHints(op.hints.get[Http].toList.map(h => h: Hints.Binding)*)
     }
   }
 

@@ -1,7 +1,7 @@
 import org.typelevel.sbt.gha.JobEnvironment
 import org.typelevel.sbt.gha.PermissionValue
 import org.typelevel.sbt.gha.Permissions
-ThisBuild / scalaVersion := "3.6.3"
+ThisBuild / scalaVersion := "3.7.0"
 ThisBuild / scalacOptions ++= Seq(
   "-no-indent",
   "-deprecation",
