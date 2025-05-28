@@ -88,7 +88,9 @@ val smithyDumpApi = project
     libraryDependencies ++= Seq(
       "org.http4s" %% "http4s-dsl" % "0.23.30",
       "org.http4s" %% "http4s-ember-server" % "0.23.30",
-    )
+      "org.http4s" %% "http4s-circe" % "0.23.30",
+    ),
+    fork := false,
   )
   .dependsOn(smithyDump)
 

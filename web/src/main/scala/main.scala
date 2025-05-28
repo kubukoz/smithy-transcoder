@@ -15,14 +15,25 @@ import monocle.Focus
 import monocle.Lens
 import smithy.api.Http
 import smithy.api.NonEmptyString
+import smithy.api.Trait
 import smithy4s.Blob
 import smithy4s.Document
 import smithy4s.Hints
+import smithy4s.ShapeId
+import smithy4s.ShapeTag
 import smithy4s.dynamic.DynamicSchemaIndex
 import smithy4s.dynamic.model.Model
 import smithy4s.json.Json
 import smithy4s.schema.Schema
 import util.chaining.*
+
+case class TranscoderSelect()
+
+object TranscoderSelect extends ShapeTag.Companion[TranscoderSelect] {
+  val id: ShapeId = ShapeId("st", "select")
+
+  val schema: Schema[TranscoderSelect] = Schema.constant(TranscoderSelect())
+}
 
 object App extends IOWebApp {
 
@@ -67,11 +78,31 @@ object App extends IOWebApp {
           |namespace demo
           |
           |structure Struct {
-          |  @required _1: String
-          |  @required _2: Integer
+          |  @required name: String
+          |  @required age: Integer
           |}
           |""".stripMargin,
-      input = """{"_1": "foo", "_2": 42}""",
+      input = """{"name": "foo", "age": 42}""",
+    ),
+    Example(
+      name = "Multiple shapes",
+      model =
+        """$version: "2"
+          |
+          |namespace demo
+          |
+          |@st#select
+          |structure Struct {
+          |  @required first: String
+          |  @required second: Integer
+          |  @required nested: OtherStruct
+          |}
+          |
+          |structure OtherStruct {
+          |  @required hello: String
+          |}
+          |""".stripMargin,
+      input = """{"first": "foo", "second": 42, "nested": {"hello": "world"}}""",
     ),
     Example(
       name = "String",
@@ -224,6 +255,12 @@ object SampleComponent {
   )(
     using DumperOptionSig
   ): Resource[IO, HtmlElement[IO]] = {
+    val transcoderPreludeText =
+      """$version: "2"
+        |namespace st
+        |
+        |/// Apply this to disambiguate which shape should be used for transcoding.
+        |@trait structure select {}""".stripMargin
 
     /** The read format is the one used for decoding the input, the write format is the one used for
       * updating it. The reason why there's two of them: the write format is controlled directly by
@@ -282,7 +319,7 @@ object SampleComponent {
             fs2
               .Stream
               .eval(
-                buildNewSchema(idl, dumper).attempt
+                buildNewSchema(prelude = transcoderPreludeText, idl = idl, dumper = dumper).attempt
               )
 
           case _ => fs2.Stream.empty
@@ -382,6 +419,13 @@ object SampleComponent {
             },
           ),
         ),
+        pre(code("prelude.smithy")),
+        textArea(
+          styleAttr := "min-height: 80px",
+          disabled := true,
+          transcoderPreludeText,
+        ),
+        pre(code("input.smithy")),
         textArea.withSelf { self =>
           (
             styleAttr := "flex: 1; min-height: 150px;",
@@ -400,6 +444,9 @@ object SampleComponent {
               modelErrors,
             ),
           )
+        ),
+        div(
+          p(schema.map(_.toOption.map(s => s"Matched shape: ${s.shapeId}")))
         ),
       )
 
@@ -490,10 +537,11 @@ object SampleComponent {
 }
 
 private def buildNewSchema(
+  prelude: String,
   idl: String,
   dumper: Dumper,
 ): IO[Schema[?]] = dumper
-  .dump(idl)
+  .dump("prelude.smithy" -> prelude, "input.smithy" -> idl)
   .flatMap { newModelJson =>
     Json
       .read(Blob(newModelJson))(
@@ -505,43 +553,56 @@ private def buildNewSchema(
     DynamicSchemaIndex.load(model)
   }
   .flatMap { dsi =>
-    val input =
-      dsi
-        .allSchemas
-        .toList
-        .map(_.shapeId)
-        .filterNot(_.namespace == "smithy.api")
-        .filterNot(_.namespace.startsWith("alloy"))
-        .match {
-          case one :: Nil => IO.pure(one)
-          case _ =>
-            IO.raiseError(
-              new Exception("expected exactly one schema - current app limitation")
-            )
-        }
-        .flatMap { shapeId =>
-          dsi
-            .getSchema(shapeId)
-            .liftTo[IO](new Exception(s"weird - no schema with id $shapeId"))
-        }
+    def deconflict[T](
+      items: List[T],
+      kindPlural: String,
+    )(
+      hints: T => Hints
+    ) =
+      items.match {
+        case Nil        => IO.raiseError(new Exception(s"no $kindPlural found"))
+        case one :: Nil => IO.pure(one)
+        case more =>
+          more
+            .filter(hints(_).has[TranscoderSelect])
+            .match {
+              case Nil        => IO.raiseError(multipleError(kindPlural))
+              case one :: Nil => IO.pure(one)
+              case _          => IO.raiseError(multipleWithTraitError(kindPlural))
+            }
+      }
+
+    def multipleError(kindPlural: String) =
+      new Exception(
+        s"""Multiple $kindPlural found but none have the ${TranscoderSelect.id} trait.
+           |Try adding @${TranscoderSelect.id} to the shape you want to use.""".stripMargin
+      )
+
+    def multipleWithTraitError(kindPlural: String) =
+      new Exception(
+        s"""Multiple $kindPlural with the ${TranscoderSelect.id} trait found.
+           |Choose one you want to use, and remove the trait from the others.""".stripMargin
+      )
+
+    val input = dsi
+      .allSchemas
+      .toList
+      .filterNot(_.shapeId.namespace == "smithy.api")
+      .filterNot(_.shapeId.namespace.startsWith("alloy"))
+      .filterNot(_.hints.has[Trait])
+      .pipe(deconflict(_, "schemas")(_.hints))
 
     val op =
       dsi
         .allServices
         .toList
         .match {
-          case Nil        => IO.pure(None)
-          case one :: Nil => IO.pure(one.service.some)
-          case _ =>
-            IO.raiseError(new Exception("expected up to one service - current app limitation"))
+          case Nil  => IO.pure(None)
+          case more => deconflict(more, "services")(_.service.hints).map(_.service.some)
         }
         .pipe(OptionT(_))
         .map(_.endpoints.toList)
-        .semiflatMap {
-          case e :: Nil => IO.pure(e)
-          case _ =>
-            IO.raiseError(new Exception("expected exactly one endpoint - current app limitation"))
-        }
+        .semiflatMap(deconflict(_, "endpoints")(_.hints))
         .value
 
     // transplant the Http hint from the operation, if one is present.

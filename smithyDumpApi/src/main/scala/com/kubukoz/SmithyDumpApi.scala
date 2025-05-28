@@ -4,8 +4,11 @@ import cats.effect.*
 import cats.syntax.all.*
 import com.comcast.ip4s.*
 import org.http4s.*
+import org.http4s.circe.*
 import org.http4s.dsl.io.*
 import org.http4s.ember.server.EmberServerBuilder
+
+import CirceEntityCodec.*
 
 object SmithyDumpApi extends IOApp.Simple {
 
@@ -17,7 +20,7 @@ object SmithyDumpApi extends IOApp.Simple {
         HttpRoutes
           .of[IO] {
             case req @ POST -> Root / "api" / "dump" =>
-              req.bodyText.compile.string.flatMap { input =>
+              req.decode[Array[Array[String]]] { input =>
                 IO(SmithyDump.dump(input)).attempt.flatMap {
                   case Right(v) => Ok(v)
                   case Left(e)  => InternalServerError(e.getMessage())

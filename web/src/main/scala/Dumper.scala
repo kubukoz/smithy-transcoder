@@ -13,13 +13,15 @@ import org.scalajs.dom.Fetch
 import org.scalajs.dom.HttpMethod
 import org.scalajs.dom.RequestInit
 
+import scala.scalajs.js.JSConverters.*
 import scala.scalajs.js.JavaScriptException
 
 type DumperSig = Signal[IO, Dumper.State]
 type DumperOptionSig = Signal[IO, Option[Dumper]]
 
 trait Dumper {
-  def dump(s: String): IO[String]
+  def dump(inputs: (String, String)*): IO[String] = dump(inputs.toList)
+  def dump(inputs: List[(String, String)]): IO[String]
   def format(s: String): IO[String]
 }
 
@@ -89,7 +91,7 @@ object Dumper {
                       .JSON
                       .parse(
                         // result of cjGetRuntimeResources (you can call it from the console, it's a global)
-                        """{"/lt/8/jre/lib/cheerpj-awt.jar":[0,131072],"/lt/8/jre/lib/rt.jar":[0,131072,10223616,12451840,15204352,15335424,15466496,15597568,17694720,17825792,18350080,18612224,19005440,19136512,20840448,21233664,21364736,21757952,22020096,26869760],"/lt/etc/passwd":[0,131072],"/lt/8/lib/ext/meta-index":[0,131072],"/lt/8/jre/lib/jsse.jar":[0,131072,786432,917504],"/lt/8/jre/lib/jce.jar":[0,131072],"/lt/8/jre/lib/charsets.jar":[0,131072,1703936,1835008],"/lt/8/jre/lib/resources.jar":[0,131072,917504,1179648],"/lt/8/jre/lib/javaws.jar":[0,131072,1441792,1703936],"/lt/8/lib/logging.properties":[0,131072],"/lt/etc/localtime":[],"/lt/8/lib/ext":[],"/lt/8/jre/lib/meta-index":[0,131072],"/lt/8/lib/ext/index.list":[],"/lt/8/lib/ext/localedata.jar":[],"/lt/8/lib/ext/sunjce_provider.jar":[],"/lt/8/jre/lib":[]}"""
+                        """{"/lt/8/jre/lib/meta-index":[0,131072],"/lt/8/jre/lib/rt.jar":[0,131072,10223616,12451840,15204352,15335424,15466496,15597568,17694720,17825792,18350080,18612224,19005440,19136512,20840448,21233664,21364736,21757952,22020096,26869760],"/lt/8/lib/logging.properties":[0,131072],"/lt/8/jre/lib/javaws.jar":[0,131072,1441792,1703936],"/lt/8/jre/lib/resources.jar":[0,131072,917504,1179648],"/lt/8/jre/lib/charsets.jar":[0,131072,1703936,1835008],"/lt/8/jre/lib/jce.jar":[0,131072],"/lt/8/jre/lib/jsse.jar":[0,131072,786432,917504],"/lt/8/lib/ext/meta-index":[0,131072],"/lt/etc/passwd":[0,131072],"/lt/8/jre/lib/cheerpj-awt.jar":[0,131072],"/lt/etc/localtime":[],"/lt/8/lib/ext":[],"/lt/8/lib/ext/index.list":[],"/lt/8/lib/ext/localedata.jar":[],"/lt/8/lib/ext/sunjce_provider.jar":[],"/lt/8/jre/lib":[]}"""
                       ),
                     preloadProgress = { (preloadDone: Int, preloadTotal: Int) =>
                       val target = State.LoadingCheerp(preloadDone - 1, preloadTotal)
@@ -140,10 +142,18 @@ object Dumper {
               loadLib
                 .map { underlying =>
                   new Dumper {
-                    def dump(s: String): IO[String] = m
+                    def dump(inputs: List[(String, String)]): IO[String] = m
                       .lock
                       .surround {
-                        IO.fromPromise(IO(underlying.dump(s)))
+                        IO.fromPromise(
+                          IO(
+                            underlying.dump(
+                              inputs
+                                .map(_.toList.asInstanceOf[List[String]].toArray.toJSArray)
+                                .toJSArray
+                            )
+                          )
+                        )
                       }
                       .recoverWith(remapExceptions)
 
@@ -164,7 +174,7 @@ object Dumper {
                 .flatTap(_ => state.set(State.LoadingLibrary))
                 // just to finish loading
                 .flatTap(_.format("").attempt)
-                .flatTap(_.dump("").attempt)
+                .flatTap(_.dump().attempt)
                 .flatTap(dumper => state.set(State.Loaded(dumper)))
                 // this is probably not needed at this stage
                 .recoverWith(remapExceptions)
@@ -175,21 +185,26 @@ object Dumper {
 
   def remote: Dumper =
     new {
-      // http POST /api/dump s=$s
-      def dump(s: String): IO[String] = IO
+      // http POST /api/dump
+      def dump(inputs: List[(String, String)]): IO[String] = IO
         .fromPromise {
           IO {
             Fetch.fetch(
               "/api/dump",
               new RequestInit {
                 this.method = HttpMethod.POST
-                this.body = s
+                this.body = scalajs
+                  .js
+                  .JSON
+                  .stringify(
+                    inputs.map(_.toList.asInstanceOf[List[String]].toArray.toJSArray).toJSArray
+                  )
               },
             )
           }
         }
         .flatMap { r =>
-          IO.fromPromise(IO(r.text())).flatMap {
+          IO.fromPromise(IO(r.json())).map(_.asInstanceOf[String]).flatMap {
             case body if r.status == 200 => IO.pure(body)
             case body                    => IO.raiseError(new Exception(body))
           }

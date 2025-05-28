@@ -9,7 +9,7 @@ object facades {
 
   @js.native
   trait JSDumper extends js.Object {
-    def dump(s: String): js.Promise[String] = js.native
+    def dump(inputs: scalajs.js.Array[scalajs.js.Array[String]]): js.Promise[String] = js.native
     def format(s: String): js.Promise[String] = js.native
   }
 
