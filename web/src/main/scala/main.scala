@@ -185,7 +185,10 @@ object App extends IOWebApp {
 
   val defaultSchema =
     Schema
-      .tuple(Schema.string, Schema.int)
+      .struct[(String, Int)](
+        Schema.string.required("name", _._1),
+        Schema.int.required("age", _._2),
+      )((_, _))
       .withId("demo", "Struct")
       .toHttpInputSchema
 
