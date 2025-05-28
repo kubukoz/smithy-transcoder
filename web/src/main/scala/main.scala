@@ -506,7 +506,7 @@ object SampleComponent {
                     },
                     a(
                       small("(what is this?)"),
-                      href := "https://disneystreaming.github.io/smithy4s/docs/protocols/simple-rest-json/overview#explicit-null-encoding",
+                      href := "https://disneystreaming.github.io/smithy4s/docs/protocols/simple-rest-json/overview/#field-filtering-and-explicit-null-encoding",
                     ),
                   )
                 ),
