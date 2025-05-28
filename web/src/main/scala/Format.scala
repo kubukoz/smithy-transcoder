@@ -60,12 +60,6 @@ enum Format derives Eq {
       case SimpleRestJson(_) => FormatKind.SimpleRestJson
     }
 
-  // def getFieldFilter: Option[FieldFilter] =
-  //   this match {
-  //     case JSON(fieldFilter) => fieldFilter.some
-  //     case _                 => None
-  //   }
-
   case JSON(fieldFilter: FieldFilter)
   case Protobuf
   case XML
