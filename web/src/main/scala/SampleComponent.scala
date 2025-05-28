@@ -1,6 +1,5 @@
 import calico.html.io.*
 import calico.html.io.given
-import cats.data.OptionT
 import cats.effect.IO
 import cats.effect.kernel.Resource
 import cats.kernel.Eq
@@ -12,16 +11,10 @@ import monocle.Focus
 import monocle.Lens
 import smithy.api.Http
 import smithy.api.NonEmptyString
-import smithy.api.Trait
-import smithy4s.Blob
 import smithy4s.Document
 import smithy4s.Hints
-import smithy4s.dynamic.DynamicSchemaIndex
-import smithy4s.dynamic.model.Model
-import smithy4s.json.Json
 import smithy4s.schema.FieldFilter
 import smithy4s.schema.Schema
-import util.chaining.*
 
 object SampleComponent {
   import monocle.syntax.all.*
@@ -91,19 +84,24 @@ object SampleComponent {
     for {
       state <- SignallingRef[IO].of(State.init).toResource
 
-      dumperOption = summon[DumperOptionSig]
-
       currentIDL = state.lens(_.currentIDL)
       currentInput = state.lens(_.currentInput)
       fieldFilter = state.lens(_.fieldFilter)
 
       readFormatKind = state.lens(_.readFormatKind)
-      readFormat = (readFormatKind.sig, fieldFilter.sig).mapN(_.toFormat(_))
-
       writeFormatKind = state.lens(_.writeFormatKind)
-      writeFormat = (writeFormatKind.sig, fieldFilter.sig).mapN(_.toFormat(_))
 
-      schema <- (currentIDL.changes, dumperOption)
+      _ <-
+        externalUpdates
+          .evalMap { update =>
+            currentIDL.set(update.model) *>
+              currentInput.set(update.input)
+          }
+          .compile
+          .drain
+          .background
+
+      schema <- (currentIDL.changes, summon[DumperOptionSig])
         .tupled
         .discrete
         .switchMap {
@@ -111,13 +109,29 @@ object SampleComponent {
             fs2
               .Stream
               .eval(
-                buildNewSchema(prelude = transcoderPreludeText, idl = idl, dumper = dumper).attempt
+                SchemaBuilder
+                  .buildNewSchema(prelude = transcoderPreludeText, idl = idl, dumper = dumper)
+                  .attempt
               )
 
           case _ => fs2.Stream.empty
         }
         // for offline / jvmless mode, general "instantness"
         .holdResource(initSchema.asRight)
+
+      modelSourceBlock = {
+        val modelErrors = schema.map(_.swap.toOption.map(_.getMessage))
+
+        SchemaPane.make(
+          currentIDL = currentIDL,
+          schema = schema,
+          modelErrors = modelErrors,
+          transcoderPreludeText = transcoderPreludeText,
+        )
+      }
+
+      readFormat = (readFormatKind.sig, fieldFilter.sig).mapN(_.toFormat(_))
+      writeFormat = (writeFormatKind.sig, fieldFilter.sig).mapN(_.toFormat(_))
 
       currentValueSignal <-
         (currentInput, readFormat, schema)
@@ -134,17 +148,6 @@ object SampleComponent {
           .discrete
           .switchMap(fs2.Stream.eval)
           .hold1Resource
-
-      canonicalValueSignal = currentValueSignal.map {
-        _.map { vws =>
-          Document
-            .Encoder
-            .withFieldFilter(FieldFilter.EncodeAll)
-            .fromSchema(vws.s)
-            .encode(vws.a)
-        }.fold(_ => "-", _.show)
-      }
-
       _ <-
         writeFormat
           .changes
@@ -175,26 +178,17 @@ object SampleComponent {
           .drain
           .background
 
-      _ <-
-        externalUpdates
-          .evalMap { update =>
-            currentIDL.set(update.model) *>
-              currentInput.set(update.input)
-          }
-          .compile
-          .drain
-          .background
-
-      modelErrors = schema.map(_.swap.toOption.map(_.getMessage))
-
-      modelSourceBlock = SchemaPane.make(
-        currentIDL = currentIDL,
-        schema = schema,
-        modelErrors = modelErrors,
-        transcoderPreludeText = transcoderPreludeText,
-      )
-
       inputErrors = currentValueSignal.map(_.swap.toOption)
+
+      canonicalValueSignal = currentValueSignal.map {
+        _.map { vws =>
+          Document
+            .Encoder
+            .withFieldFilter(FieldFilter.EncodeAll)
+            .fromSchema(vws.s)
+            .encode(vws.a)
+        }.fold(_ => "-", _.show)
+      }
 
       inputView = InputPane.make(
         writeFormatKind = writeFormatKind,
@@ -215,84 +209,6 @@ object SampleComponent {
 }
 
 private val defaultHttpHint = Http(NonEmptyString("POST"), NonEmptyString("/"))
-
-private def buildNewSchema(
-  prelude: String,
-  idl: String,
-  dumper: Dumper,
-): IO[Schema[?]] = dumper
-  .dump("prelude.smithy" -> prelude, "input.smithy" -> idl)
-  .flatMap { newModelJson =>
-    Json
-      .read(Blob(newModelJson))(
-        using Model.schema
-      )
-      .liftTo[IO]
-  }
-  .map { model =>
-    DynamicSchemaIndex.load(model)
-  }
-  .flatMap { dsi =>
-    def deconflict[T](
-      items: List[T],
-      kindPlural: String,
-    )(
-      hints: T => Hints
-    ) =
-      items.match {
-        case Nil        => IO.raiseError(new Exception(s"no $kindPlural found"))
-        case one :: Nil => IO.pure(one)
-        case more =>
-          more
-            .filter(hints(_).has[TranscoderSelect])
-            .match {
-              case Nil        => IO.raiseError(multipleError(kindPlural))
-              case one :: Nil => IO.pure(one)
-              case _          => IO.raiseError(multipleWithTraitError(kindPlural))
-            }
-      }
-
-    def multipleError(kindPlural: String) =
-      new Exception(
-        s"""Multiple $kindPlural found but none have the ${TranscoderSelect.id} trait.
-           |Try adding @${TranscoderSelect.id} to the shape you want to use.""".stripMargin
-      )
-
-    def multipleWithTraitError(kindPlural: String) =
-      new Exception(
-        s"""Multiple $kindPlural with the ${TranscoderSelect.id} trait found.
-           |Choose one you want to use, and remove the trait from the others.""".stripMargin
-      )
-
-    val input = dsi
-      .allSchemas
-      .toList
-      .filterNot(_.shapeId.namespace == "smithy.api")
-      .filterNot(_.shapeId.namespace.startsWith("alloy"))
-      .filterNot(_.hints.has[Trait])
-      .pipe(deconflict(_, "schemas")(_.hints))
-
-    val op =
-      dsi
-        .allServices
-        .toList
-        .match {
-          case Nil  => IO.pure(None)
-          case more => deconflict(more, "services")(_.service.hints).map(_.service.some)
-        }
-        .pipe(OptionT(_))
-        .map(_.endpoints.toList)
-        .semiflatMap(deconflict(_, "endpoints")(_.hints))
-        .value
-
-    // transplant the Http hint from the operation, if one is present.
-    // otherwise, a default value will be used.
-    (input, op).mapN {
-      case (input, None) => input.toHttpInputSchema
-      case (input, Some(op)) =>
-        input.addHints(op.hints.get[Http].toList.map(h => h: Hints.Binding)*)
-    }
-  }
 
 extension [A](s: Schema[A]) {
 
