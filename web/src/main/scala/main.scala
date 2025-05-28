@@ -424,13 +424,14 @@ object SampleComponent {
         ),
         pre(code("prelude.smithy")),
         textArea(
-          styleAttr := "min-height: 80px",
+          rows := 5,
           disabled := true,
           transcoderPreludeText,
         ),
         pre(code("input.smithy")),
         textArea.withSelf { self =>
           (
+            rows := 30,
             styleAttr := "flex: 1; min-height: 150px;",
             disabled <-- dumperOption.map(_.isEmpty),
             onInput(
@@ -516,7 +517,7 @@ object SampleComponent {
           (
             value <-- currentInput,
             onInput(self.value.get.flatMap(currentInput.set)),
-            rows := 7,
+            rows := 15,
           )
         },
         div(
