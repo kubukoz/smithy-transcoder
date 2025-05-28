@@ -32,21 +32,23 @@ enum FormatKind derives Eq {
 
   def name = productPrefix
 
-  def usesExplicitDefaults =
+  def usesFieldFilter =
     this match {
       case JSON | SimpleRestJson => true
       case _                     => false
     }
 
-  def toFormat(explicitDefaults: Boolean): Format =
+  def toFormat(fieldFilter: FieldFilter): Format =
     this match {
-      case JSON           => Format.JSON(explicitDefaults)
+      case JSON           => Format.JSON(fieldFilter)
       case Protobuf       => Format.Protobuf
       case XML            => Format.XML
-      case SimpleRestJson => Format.SimpleRestJson(explicitDefaults)
+      case SimpleRestJson => Format.SimpleRestJson(fieldFilter)
     }
 
 }
+
+given Eq[FieldFilter] = Eq.fromUniversalEquals
 
 enum Format derives Eq {
 
@@ -58,16 +60,16 @@ enum Format derives Eq {
       case SimpleRestJson(_) => FormatKind.SimpleRestJson
     }
 
-  def jsonExplicitDefaults: Option[Boolean] =
-    this match {
-      case JSON(explicitDefaults) => explicitDefaults.some
-      case _                      => None
-    }
+  // def getFieldFilter: Option[FieldFilter] =
+  //   this match {
+  //     case JSON(fieldFilter) => fieldFilter.some
+  //     case _                 => None
+  //   }
 
-  case JSON(explicitDefaults: Boolean)
+  case JSON(fieldFilter: FieldFilter)
   case Protobuf
   case XML
-  case SimpleRestJson(explicitDefaults: Boolean)
+  case SimpleRestJson(fieldFilter: FieldFilter)
 
   // todo: look into whether this caches decoders properly
   def decode[A](
@@ -76,15 +78,11 @@ enum Format derives Eq {
     using Schema[A]
   ): IO[Either[String, A]] =
     this match {
-      case JSON(explicitDefaults) =>
+      case JSON(fieldFilter) =>
         Json
           .payloadCodecs
           .configureJsoniterCodecCompiler {
-            _.withFieldFilter(
-              if explicitDefaults then FieldFilter.EncodeAll
-              else
-                FieldFilter.Default
-            )
+            _.withFieldFilter(fieldFilter)
           }
           .decoders
           .fromSchema(summon[Schema[A]])
@@ -114,16 +112,14 @@ enum Format derives Eq {
           .leftMap(_.toString)
           .pure[IO]
 
-      case SimpleRestJson(explicitDefaults) =>
+      case SimpleRestJson(fieldFilter) =>
         val svc = Format.mkFakeService[A]
 
         Deferred[IO, Either[String, A]]
           .flatMap { deff =>
             val send = SimpleRestJsonBuilder
               .withFieldFilter(
-                if explicitDefaults then FieldFilter.EncodeAll
-                else
-                  FieldFilter.Default
+                fieldFilter
               )
               .routes(
                 svc.fromPolyFunction(
@@ -172,14 +168,12 @@ enum Format derives Eq {
     using Schema[A]
   ): IO[String] =
     this match {
-      case JSON(explicitDefaults) =>
+      case JSON(fieldFilter) =>
         Json
           .payloadCodecs
           .configureJsoniterCodecCompiler {
             _.withFieldFilter(
-              if explicitDefaults then FieldFilter.EncodeAll
-              else
-                FieldFilter.Default
+              fieldFilter
             )
           }
           .withJsoniterWriterConfig(WriterConfig.withIndentionStep(2))
@@ -205,17 +199,13 @@ enum Format derives Eq {
           .toUTF8String
           .pure[IO]
 
-      case SimpleRestJson(explicitDefaults) =>
+      case SimpleRestJson(fieldFilter) =>
         val svc = Format.mkFakeService[A]
 
         IO.deferred[String]
           .flatMap { deff =>
             SimpleRestJsonBuilder
-              .withFieldFilter(
-                if explicitDefaults then FieldFilter.EncodeAll
-                else
-                  FieldFilter.Default
-              )
+              .withFieldFilter(fieldFilter)
               .withMaxArity(Int.MaxValue)
               .apply(svc)
               .client(

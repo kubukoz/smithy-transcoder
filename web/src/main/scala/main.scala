@@ -24,6 +24,7 @@ import smithy4s.ShapeTag
 import smithy4s.dynamic.DynamicSchemaIndex
 import smithy4s.dynamic.model.Model
 import smithy4s.json.Json
+import smithy4s.schema.FieldFilter
 import smithy4s.schema.Schema
 import util.chaining.*
 
@@ -281,7 +282,7 @@ object SampleComponent {
       currentInput: String,
       readFormatKind: FormatKind,
       writeFormatKind: FormatKind,
-      jsonExplicitDefaults: Boolean,
+      fieldFilter: FieldFilter,
     )
 
     object State {
@@ -293,7 +294,7 @@ object SampleComponent {
           currentInput = initInput,
           readFormatKind = initFmt,
           writeFormatKind = initFmt,
-          jsonExplicitDefaults = false,
+          fieldFilter = FieldFilter.Default,
         )
       }
     }
@@ -306,13 +307,13 @@ object SampleComponent {
 
       currentIDL = state.lens(_.currentIDL)
       currentInput = state.lens(_.currentInput)
-      jsonExplicitDefaults = state.lens(_.jsonExplicitDefaults)
+      fieldFilter = state.lens(_.fieldFilter)
 
       readFormatKind = state.lens(_.readFormatKind)
-      readFormat = (readFormatKind.sig, jsonExplicitDefaults.sig).mapN(_.toFormat(_))
+      readFormat = (readFormatKind.sig, fieldFilter.sig).mapN(_.toFormat(_))
 
       writeFormatKind = state.lens(_.writeFormatKind)
-      writeFormat = (writeFormatKind.sig, jsonExplicitDefaults.sig).mapN(_.toFormat(_))
+      writeFormat = (writeFormatKind.sig, fieldFilter.sig).mapN(_.toFormat(_))
 
       schema <- (currentIDL.changes, dumperOption)
         .tupled
@@ -348,7 +349,11 @@ object SampleComponent {
 
       canonicalValueSignal = currentValueSignal.map {
         _.map { vws =>
-          Document.Encoder.fromSchema(vws.s).encode(vws.a)
+          Document
+            .Encoder
+            .withFieldFilter(FieldFilter.EncodeAll)
+            .fromSchema(vws.s)
+            .encode(vws.a)
         }.fold(_ => "-", _.show)
       }
 
@@ -487,20 +492,35 @@ object SampleComponent {
                 // these vars should modify their own signals only, same with the format change, but the actual format should still be kept in sync
                 // with the text state, and should be updated by a consumer of a composition of signals (current value + format, desired format, desired format's options).
                 // that's the only reasonable way to avoid repeating onFormatChange in every click handler.
-                Option.when(fmt.usesExplicitDefaults)(
+                Option.when(fmt.usesFieldFilter)(
                   label(
                     styleAttr := "display: block; margin-left: 20px",
-                    "Explicit defaults",
-                    input.withSelf { self =>
+                    "Field filter",
+                    select.withSelf { self =>
+                      val values = List(
+                        "Default" -> FieldFilter.Default,
+                        "EncodeAll" -> FieldFilter.EncodeAll,
+                        "SkipUnsetOptions" -> FieldFilter.SkipUnsetOptions,
+                        "SkipEmptyOptionalCollection" -> FieldFilter.SkipEmptyOptionalCollection,
+                        "SkipNonRequiredDefaultValues" -> FieldFilter.SkipNonRequiredDefaultValues,
+                      )
+
                       (
-                        `type` := "checkbox",
-                        checked <-- jsonExplicitDefaults,
                         disabled <-- writeFormatKind.map(_ =!= fmt),
+                        values.map { (name, _) =>
+                          option(
+                            value := name,
+                            name,
+                          )
+                        },
                         onInput(
                           self
-                            .checked
+                            .value
                             .get
-                            .flatMap(jsonExplicitDefaults.set)
+                            .map { choice =>
+                              values.find(_._1 === choice).map(_._2).get
+                            }
+                            .flatMap(fieldFilter.set)
                         ),
                       )
                     },
