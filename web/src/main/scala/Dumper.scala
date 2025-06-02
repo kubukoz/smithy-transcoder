@@ -157,10 +157,6 @@ object Dumper {
                       }
                       .recoverWith(remapExceptions)
 
-                    // TODO: doesn't work if format gets called after a dump has been performed. Looks like the SPI in ModelAssembler is doing something weird to cheerp's global state
-                    // https://github.com/leaningtech/cheerpj-meta/issues/209
-                    // a workaround might be to move to web workers already and have a separate worker for the dump and format methods.
-                    // in fact, doing a format first then a dump works as a decent workaround.
                     // a super nice advantage of moving to workers would be that we'd unblock the main thread from these heavy actions and let it focus on UI and maybe the smithy Dynamic part
                     // as well as get a pool of workers with some round-robin magic.
                     def format(s: String): IO[String] = m
@@ -173,8 +169,8 @@ object Dumper {
                 }
                 .flatTap(_ => state.set(State.LoadingLibrary))
                 // just to finish loading
-                .flatTap(_.format("").attempt)
                 .flatTap(_.dump().attempt)
+                .flatTap(_.format("").attempt)
                 .flatTap(dumper => state.set(State.Loaded(dumper)))
                 // this is probably not needed at this stage
                 .recoverWith(remapExceptions)
