@@ -60,6 +60,8 @@ ThisBuild / githubWorkflowGeneratedCI ~= {
   }
 }
 
+ThisBuild / mergifyStewardConfig ~= (_.map(_.withMergeMinors(true)))
+
 val smithyDump = project
   .settings(
     libraryDependencies ++= Seq(
