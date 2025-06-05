@@ -1,7 +1,9 @@
+import org.scalajs.linker.interface.ModuleSplitStyle
 import org.typelevel.sbt.gha.JobEnvironment
 import org.typelevel.sbt.gha.PermissionValue
 import org.typelevel.sbt.gha.Permissions
-ThisBuild / scalaVersion := "3.7.0"
+
+ThisBuild / scalaVersion := "3.7.1"
 ThisBuild / scalacOptions ++= Seq(
   "-no-indent",
   "-deprecation",
@@ -11,21 +13,11 @@ ThisBuild / scalacOptions ++= Seq(
 )
 
 ThisBuild / githubWorkflowPermissions := Some {
-  // https://github.com/typelevel/sbt-typelevel/pull/794
-  Permissions.Specify(
-    pages = PermissionValue.Write,
-    idToken = PermissionValue.Write,
-    actions = PermissionValue.None,
-    checks = PermissionValue.None,
-    contents = PermissionValue.Read,
-    deployments = PermissionValue.None,
-    issues = PermissionValue.None,
-    packages = PermissionValue.None,
-    pullRequests = PermissionValue.None,
-    repositoryProjects = PermissionValue.None,
-    securityEvents = PermissionValue.None,
-    statuses = PermissionValue.None,
-  )
+  Permissions
+    .Specify
+    .defaultRestrictive
+    .withPages(PermissionValue.Write)
+    .withIdToken(PermissionValue.Write)
 }
 
 ThisBuild / githubWorkflowPublish := Seq(
@@ -71,9 +63,9 @@ ThisBuild / githubWorkflowGeneratedCI ~= {
 val smithyDump = project
   .settings(
     libraryDependencies ++= Seq(
-      "software.amazon.smithy" % "smithy-model" % "1.57.1",
-      "software.amazon.smithy" % "smithy-syntax" % "1.57.1",
-      "com.disneystreaming.alloy" % "alloy-core" % "0.3.19",
+      "software.amazon.smithy" % "smithy-model" % "1.58.0",
+      "software.amazon.smithy" % "smithy-syntax" % "1.58.0",
+      "com.disneystreaming.alloy" % "alloy-core" % "0.3.20",
     ),
     autoScalaLibrary := false,
     javacOptions ++= Seq(
@@ -103,12 +95,12 @@ val web = project
     },
     libraryDependencies ++= Seq(
       "com.armanbilge" %%% "calico" % "0.2.3",
-      "org.typelevel" %%% "kittens" % "3.4.0",
+      "org.typelevel" %%% "kittens" % "3.5.0",
       "org.typelevel" %%% "cats-core" % "2.13.0",
-      "com.disneystreaming.smithy4s" %%% "smithy4s-xml" % "0.18.35",
-      "com.disneystreaming.smithy4s" %%% "smithy4s-protobuf" % "0.18.35",
-      "com.disneystreaming.smithy4s" %%% "smithy4s-http4s" % "0.18.35",
-      "com.disneystreaming.smithy4s" %%% "smithy4s-dynamic" % "0.18.35",
+      "com.disneystreaming.smithy4s" %%% "smithy4s-xml" % "0.18.37",
+      "com.disneystreaming.smithy4s" %%% "smithy4s-protobuf" % "0.18.37",
+      "com.disneystreaming.smithy4s" %%% "smithy4s-http4s" % "0.18.37",
+      "com.disneystreaming.smithy4s" %%% "smithy4s-dynamic" % "0.18.37",
       "org.http4s" %%% "http4s-ember-core" % "0.23.30",
     ),
   )

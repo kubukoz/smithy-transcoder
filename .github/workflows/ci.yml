@@ -20,7 +20,7 @@ permissions:
   deployments: none
   id-token: write
   issues: none
-  packages: none
+  packages: read
   pages: write
   pull-requests: none
   repository-projects: none
