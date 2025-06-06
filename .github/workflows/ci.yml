@@ -73,6 +73,20 @@ jobs:
       - name: Build project
         run: sbt '++ ${{ matrix.scala }}' test
 
+      - run: sbt '++ ${{ matrix.scala }}' smithyDump/assembly
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+          cache-dependency-path: web/yarn.lock
+
+      - working-directory: web
+        run: yarn
+
+      - working-directory: web
+        run: yarn build
+
       - name: Make target directories
         if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main')
         run: mkdir -p target smithyDump/target smithyDumpApi/target web/target project/target
