@@ -105,7 +105,6 @@ object SampleComponent {
         )
       }
     }
-    case class ValueWithSchema[A](a: A, s: Schema[A])
 
     for {
       initState <-
@@ -218,22 +217,12 @@ object SampleComponent {
 
       inputErrors = currentValueSignal.map(_.swap.toOption)
 
-      canonicalValueSignal = currentValueSignal.map {
-        _.map { vws =>
-          Document
-            .Encoder
-            .withFieldFilter(smithy4s.schema.FieldFilter.EncodeAll)
-            .fromSchema(vws.s)
-            .encode(vws.a)
-        }.fold(_ => "-", _.show)
-      }
-
       inputView = InputPane.make(
         writeFormatKind = writeFormatKind,
         inputErrors = inputErrors,
         fieldFilter = fieldFilter,
         currentInput = currentInput,
-        canonicalValueSignal = canonicalValueSignal,
+        currentValueSignal = currentValueSignal,
       )
 
       e <- div(
@@ -257,6 +246,8 @@ object SampleComponent {
   }
 
 }
+
+case class ValueWithSchema[A](a: A, s: Schema[A])
 
 private val defaultHttpHint = Http(NonEmptyString("POST"), NonEmptyString("/"))
 
