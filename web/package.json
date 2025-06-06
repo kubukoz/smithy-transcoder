@@ -6,8 +6,11 @@
     "vite": "^6.1.0"
   },
   "scripts": {
-    "start": "concurrently \"cd ../ && sleep 1 && retry sbt ~fastLinkJS\" \"retry vite -- --open --host\"",
+    "start": "concurrently \"cd ../ && sleep 1 && retry sbt 'smithyDump/assembly;~fastLinkJS'\" \"retry vite -- --open --host\"",
     "build": "vite build"
   },
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "lz-string": "^1.5.0"
+  }
 }

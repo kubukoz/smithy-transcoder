@@ -13,8 +13,8 @@ import smithy.api.Http
 import smithy.api.NonEmptyString
 import smithy4s.Document
 import smithy4s.Hints
-import smithy4s.schema.FieldFilter
 import smithy4s.schema.Schema
+import smithytranscoder.FieldFilter
 
 object SampleComponent {
   import monocle.syntax.all.*
@@ -75,7 +75,7 @@ object SampleComponent {
           currentInput = initInput,
           readFormatKind = initFmt,
           writeFormatKind = initFmt,
-          fieldFilter = FieldFilter.Default,
+          fieldFilter = FieldFilter.DEFAULT,
         )
       }
     }
@@ -184,7 +184,7 @@ object SampleComponent {
         _.map { vws =>
           Document
             .Encoder
-            .withFieldFilter(FieldFilter.EncodeAll)
+            .withFieldFilter(smithy4s.schema.FieldFilter.EncodeAll)
             .fromSchema(vws.s)
             .encode(vws.a)
         }.fold(_ => "-", _.show)

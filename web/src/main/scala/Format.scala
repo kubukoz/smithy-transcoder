@@ -21,6 +21,9 @@ import smithy4s.schema.OperationSchema
 import smithy4s.schema.Schema
 import smithy4s.schema.Schema.StructSchema
 import smithy4s.xml.Xml
+import smithytranscoder.Format
+import smithytranscoder.JsonFormat
+import smithytranscoder.SimpleRestJsonFormat
 
 import java.util.Base64
 
@@ -38,32 +41,27 @@ enum FormatKind derives Eq {
       case _                     => false
     }
 
-  def toFormat(fieldFilter: FieldFilter): Format =
+  def toFormat(fieldFilter: smithytranscoder.FieldFilter): Format =
     this match {
-      case JSON           => Format.JSON(fieldFilter)
-      case Protobuf       => Format.Protobuf
-      case XML            => Format.XML
-      case SimpleRestJson => Format.SimpleRestJson(fieldFilter)
+      case JSON           => Format.json(JsonFormat(fieldFilter))
+      case Protobuf       => Format.protobuf()
+      case XML            => Format.xml()
+      case SimpleRestJson => Format.simpleRestJson(SimpleRestJsonFormat(fieldFilter))
     }
 
 }
 
 given Eq[FieldFilter] = Eq.fromUniversalEquals
 
-enum Format derives Eq {
+extension (fmt: Format) {
 
   def kind: FormatKind =
-    this match {
-      case JSON(_)           => FormatKind.JSON
-      case Protobuf          => FormatKind.Protobuf
-      case XML               => FormatKind.XML
-      case SimpleRestJson(_) => FormatKind.SimpleRestJson
+    fmt match {
+      case Format.JsonCase(_)           => FormatKind.JSON
+      case Format.ProtobufCase          => FormatKind.Protobuf
+      case Format.XmlCase               => FormatKind.XML
+      case Format.SimpleRestJsonCase(_) => FormatKind.SimpleRestJson
     }
-
-  case JSON(fieldFilter: FieldFilter)
-  case Protobuf
-  case XML
-  case SimpleRestJson(fieldFilter: FieldFilter)
 
   // todo: look into whether this caches decoders properly
   def decode[A](
@@ -71,12 +69,12 @@ enum Format derives Eq {
   )(
     using Schema[A]
   ): IO[Either[String, A]] =
-    this match {
-      case JSON(fieldFilter) =>
+    fmt match {
+      case Format.JsonCase(JsonFormat(fieldFilter)) =>
         Json
           .payloadCodecs
           .configureJsoniterCodecCompiler {
-            _.withFieldFilter(fieldFilter)
+            _.withFieldFilter(fieldFilter.toFilter)
           }
           .decoders
           .fromSchema(summon[Schema[A]])
@@ -84,7 +82,7 @@ enum Format derives Eq {
           .leftMap(_.toString)
           .pure[IO]
 
-      case Protobuf =>
+      case Format.ProtobufCase =>
         Either
           .catchNonFatal(Base64.getDecoder.decode(input))
           .map(Blob(_))
@@ -98,7 +96,7 @@ enum Format derives Eq {
           }
           .leftMap(_.toString)
           .pure[IO]
-      case XML =>
+      case Format.XmlCase =>
         Xml
           .decoders
           .fromSchema(summon[Schema[A]])
@@ -106,15 +104,13 @@ enum Format derives Eq {
           .leftMap(_.toString)
           .pure[IO]
 
-      case SimpleRestJson(fieldFilter) =>
-        val svc = Format.mkFakeService[A]
+      case Format.SimpleRestJsonCase(SimpleRestJsonFormat(fieldFilter)) =>
+        val svc = mkFakeService[A]
 
         Deferred[IO, Either[String, A]]
           .flatMap { deff =>
             val send = SimpleRestJsonBuilder
-              .withFieldFilter(
-                fieldFilter
-              )
+              .withFieldFilter(fieldFilter.toFilter)
               .routes(
                 svc.fromPolyFunction(
                   new PolyFunction5[[I, _, _, _, _] =>> I, smithy4s.kinds.Kind1[IO]#toKind5] {
@@ -161,13 +157,13 @@ enum Format derives Eq {
   )(
     using Schema[A]
   ): IO[String] =
-    this match {
-      case JSON(fieldFilter) =>
+    fmt match {
+      case Format.JsonCase(JsonFormat(fieldFilter)) =>
         Json
           .payloadCodecs
           .configureJsoniterCodecCompiler {
             _.withFieldFilter(
-              fieldFilter
+              fieldFilter.toFilter
             )
           }
           .withJsoniterWriterConfig(WriterConfig.withIndentionStep(2))
@@ -177,7 +173,7 @@ enum Format derives Eq {
           .toUTF8String
           .pure[IO]
 
-      case Protobuf =>
+      case Format.ProtobufCase =>
         smithy4s
           .protobuf
           .Protobuf
@@ -187,19 +183,19 @@ enum Format derives Eq {
           .toBase64String
           .pure[IO]
 
-      case XML =>
+      case Format.XmlCase =>
         Xml
           .write(v)
           .toUTF8String
           .pure[IO]
 
-      case SimpleRestJson(fieldFilter) =>
-        val svc = Format.mkFakeService[A]
+      case Format.SimpleRestJsonCase(SimpleRestJsonFormat(fieldFilter)) =>
+        val svc = mkFakeService[A]
 
         IO.deferred[String]
           .flatMap { deff =>
             SimpleRestJsonBuilder
-              .withFieldFilter(fieldFilter)
+              .withFieldFilter(fieldFilter.toFilter)
               .withMaxArity(Int.MaxValue)
               .apply(svc)
               .client(
@@ -221,37 +217,48 @@ enum Format derives Eq {
 
 }
 
-object Format {
+extension (ff: smithytranscoder.FieldFilter) {
+
+  def toFilter: FieldFilter =
+    ff match {
+      case smithytranscoder.FieldFilter.DEFAULT            => FieldFilter.Default
+      case smithytranscoder.FieldFilter.ENCODE_ALL         => FieldFilter.EncodeAll
+      case smithytranscoder.FieldFilter.SKIP_UNSET_OPTIONS => FieldFilter.SkipUnsetOptions
+      case smithytranscoder.FieldFilter.SKIP_EMPTY_OPTIONAL_COLLECTION =>
+        FieldFilter.SkipEmptyOptionalCollection
+      case smithytranscoder.FieldFilter.SKIP_NON_REQUIRED_DEFAULT_VALUES =>
+        FieldFilter.SkipNonRequiredDefaultValues
+    }
+
+}
 
 // Make a single-operation service using the given schema as input, also copying the Http hint from said schema to the fake operation.
-  private def mkFakeService[A: Schema]: Service.Reflective[[I, _, _, _, _] =>> I] = {
-    // todo: uncopy paste
-    type Op[I, E, O, SI, SO] = I
+private def mkFakeService[A: Schema]: Service.Reflective[[I, _, _, _, _] =>> I] = {
+  // todo: uncopy paste
+  type Op[I, E, O, SI, SO] = I
 
-    new Service.Reflective[Op] {
-      def hints: Hints = Hints(alloy.SimpleRestJson())
-      def id: ShapeId = ShapeId("demo", "MyService")
-      def input[I, E, O, SI, SO](op: Op[I, E, O, SI, SO]): I = op
-      def ordinal[I, E, O, SI, SO](op: Op[I, E, O, SI, SO]): Int = 0
-      def version: String = ""
-      val endpoints: IndexedSeq[Endpoint[?, ?, ?, ?, ?]] = IndexedSeq(
-        new smithy4s.Endpoint[Op, A, Nothing, Unit, Nothing, Nothing] {
-          val schema: OperationSchema[A, Nothing, Unit, Nothing, Nothing] = Schema
-            .operation(ShapeId("demo", "MyOp"))
-            .withInput(summon[Schema[A]] match {
-              case s: StructSchema[?] => s
-              case other              =>
-                // non-structs can't directly be inputs, so we wrap them in fake structs with a HttpPayload member
-                Schema
-                  .struct[A](other.required[A]("body", identity).addHints(HttpPayload()))(identity)
-            })
-            .withHints(
-              summon[Schema[A]].hints.get[Http].map(a => a: Hints.Binding).toList*
-            )
-          def wrap(input: A): Op[A, Nothing, Unit, Nothing, Nothing] = input
-        }
-      )
-    }
+  new Service.Reflective[Op] {
+    def hints: Hints = Hints(alloy.SimpleRestJson())
+    def id: ShapeId = ShapeId("demo", "MyService")
+    def input[I, E, O, SI, SO](op: Op[I, E, O, SI, SO]): I = op
+    def ordinal[I, E, O, SI, SO](op: Op[I, E, O, SI, SO]): Int = 0
+    def version: String = ""
+    val endpoints: IndexedSeq[Endpoint[?, ?, ?, ?, ?]] = IndexedSeq(
+      new smithy4s.Endpoint[Op, A, Nothing, Unit, Nothing, Nothing] {
+        val schema: OperationSchema[A, Nothing, Unit, Nothing, Nothing] = Schema
+          .operation(ShapeId("demo", "MyOp"))
+          .withInput(summon[Schema[A]] match {
+            case s: StructSchema[?] => s
+            case other              =>
+              // non-structs can't directly be inputs, so we wrap them in fake structs with a HttpPayload member
+              Schema
+                .struct[A](other.required[A]("body", identity).addHints(HttpPayload()))(identity)
+          })
+          .withHints(
+            summon[Schema[A]].hints.get[Http].map(a => a: Hints.Binding).toList*
+          )
+        def wrap(input: A): Op[A, Nothing, Unit, Nothing, Nothing] = input
+      }
+    )
   }
-
 }

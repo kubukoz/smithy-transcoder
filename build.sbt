@@ -89,7 +89,7 @@ val smithyDumpApi = project
   .dependsOn(smithyDump)
 
 val web = project
-  .enablePlugins(ScalaJSPlugin)
+  .enablePlugins(ScalaJSPlugin, Smithy4sCodegenPlugin)
   .settings(
     scalaJSUseMainModuleInitializer := true,
     scalaJSLinkerConfig ~= {
@@ -99,10 +99,11 @@ val web = project
       "com.armanbilge" %%% "calico" % "0.2.3",
       "org.typelevel" %%% "kittens" % "3.5.0",
       "org.typelevel" %%% "cats-core" % "2.13.0",
-      "com.disneystreaming.smithy4s" %%% "smithy4s-xml" % "0.18.37",
-      "com.disneystreaming.smithy4s" %%% "smithy4s-protobuf" % "0.18.37",
-      "com.disneystreaming.smithy4s" %%% "smithy4s-http4s" % "0.18.37",
-      "com.disneystreaming.smithy4s" %%% "smithy4s-dynamic" % "0.18.37",
+      "com.disneystreaming.smithy4s" %%% "smithy4s-cats" % smithy4sVersion.value,
+      "com.disneystreaming.smithy4s" %%% "smithy4s-xml" % smithy4sVersion.value,
+      "com.disneystreaming.smithy4s" %%% "smithy4s-protobuf" % smithy4sVersion.value,
+      "com.disneystreaming.smithy4s" %%% "smithy4s-http4s" % smithy4sVersion.value,
+      "com.disneystreaming.smithy4s" %%% "smithy4s-dynamic" % smithy4sVersion.value,
       "org.http4s" %%% "http4s-ember-core" % "0.23.30",
     ),
   )

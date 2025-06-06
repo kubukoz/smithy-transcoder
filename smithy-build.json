@@ -1,0 +1,15 @@
+{
+    "version" : "1.0",
+    "sources" : [
+        "web/src/main/smithy",
+        "web/target/scala-3.7.1/src_managed/main/smithy"
+    ],
+    "maven" : {
+        "dependencies" : [
+            "com.disneystreaming.alloy:alloy-core:0.3.20",
+            "com.disneystreaming.smithy4s:smithy4s-protocol:0.18.37"
+        ],
+        "repositories" : [
+        ]
+    }
+}

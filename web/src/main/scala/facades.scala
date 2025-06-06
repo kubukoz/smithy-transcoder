@@ -1,6 +1,7 @@
 import scalajs.js
 
 import scala.scalajs.js.annotation.JSGlobal
+import scala.scalajs.js.annotation.JSImport
 
 object facades {
 
@@ -41,4 +42,11 @@ object facades {
 
   }
 
+}
+
+@JSImport("lz-string", JSImport.Namespace)
+@js.native
+object lzstring extends js.Object {
+  def compressToEncodedURIComponent(input: String): String = js.native
+  def decompressFromEncodedURIComponent(compressed: String): String = js.native
 }

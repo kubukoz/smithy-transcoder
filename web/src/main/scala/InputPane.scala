@@ -5,7 +5,8 @@ import cats.kernel.Eq
 import cats.syntax.all.*
 import fs2.concurrent.Signal
 import fs2.concurrent.SignallingRef
-import smithy4s.schema.FieldFilter
+import smithytranscoder.FieldFilter
+import smithytranscoder.RenderName
 
 // the one where you write your data
 object InputPane {
@@ -54,13 +55,14 @@ object InputPane {
                 styleAttr := "display: block; margin-left: 20px",
                 "Field filter",
                 select.withSelf { self =>
-                  val values = List(
-                    "Default" -> FieldFilter.Default,
-                    "EncodeAll" -> FieldFilter.EncodeAll,
-                    "SkipUnsetOptions" -> FieldFilter.SkipUnsetOptions,
-                    "SkipEmptyOptionalCollection" -> FieldFilter.SkipEmptyOptionalCollection,
-                    "SkipNonRequiredDefaultValues" -> FieldFilter.SkipNonRequiredDefaultValues,
-                  )
+                  val values = FieldFilter.values.map { ff =>
+                    ff.hints
+                      .get(RenderName)
+                      .getOrElse(
+                        sys.error("missing renderName, this is a codegen bug or something")
+                      )
+                      .value -> ff
+                  }
 
                   (
                     disabled <-- writeFormatKind.map(_ =!= fmt),
