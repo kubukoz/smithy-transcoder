@@ -1,6 +1,7 @@
 import scalajs.js
 
 import scala.scalajs.js.annotation.JSGlobal
+import scala.scalajs.js.annotation.JSImport
 
 object facades {
 
@@ -9,7 +10,7 @@ object facades {
 
   @js.native
   trait JSDumper extends js.Object {
-    def dump(s: String): js.Promise[String] = js.native
+    def dump(inputs: scalajs.js.Array[scalajs.js.Array[String]]): js.Promise[String] = js.native
     def format(s: String): js.Promise[String] = js.native
   }
 
@@ -41,4 +42,11 @@ object facades {
 
   }
 
+}
+
+@JSImport("lz-string", JSImport.Namespace)
+@js.native
+object lzstring extends js.Object {
+  def compressToEncodedURIComponent(input: String): String = js.native
+  def decompressFromEncodedURIComponent(compressed: String): String = js.native
 }

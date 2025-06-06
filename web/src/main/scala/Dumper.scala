@@ -9,18 +9,19 @@ import facades.JavaException
 import fs2.concurrent.Signal
 import fs2.concurrent.SignallingRef
 import fs2.dom.HtmlElement
-import monocle.syntax.all.*
 import org.scalajs.dom.Fetch
 import org.scalajs.dom.HttpMethod
 import org.scalajs.dom.RequestInit
 
+import scala.scalajs.js.JSConverters.*
 import scala.scalajs.js.JavaScriptException
 
 type DumperSig = Signal[IO, Dumper.State]
 type DumperOptionSig = Signal[IO, Option[Dumper]]
 
 trait Dumper {
-  def dump(s: String): IO[String]
+  def dump(inputs: (String, String)*): IO[String] = dump(inputs.toList)
+  def dump(inputs: List[(String, String)]): IO[String]
   def format(s: String): IO[String]
 }
 
@@ -141,17 +142,21 @@ object Dumper {
               loadLib
                 .map { underlying =>
                   new Dumper {
-                    def dump(s: String): IO[String] = m
+                    def dump(inputs: List[(String, String)]): IO[String] = m
                       .lock
                       .surround {
-                        IO.fromPromise(IO(underlying.dump(s)))
+                        IO.fromPromise(
+                          IO(
+                            underlying.dump(
+                              inputs
+                                .map(_.toList.asInstanceOf[List[String]].toArray.toJSArray)
+                                .toJSArray
+                            )
+                          )
+                        )
                       }
                       .recoverWith(remapExceptions)
 
-                    // TODO: doesn't work if format gets called after a dump has been performed. Looks like the SPI in ModelAssembler is doing something weird to cheerp's global state
-                    // https://github.com/leaningtech/cheerpj-meta/issues/209
-                    // a workaround might be to move to web workers already and have a separate worker for the dump and format methods.
-                    // in fact, doing a format first then a dump works as a decent workaround.
                     // a super nice advantage of moving to workers would be that we'd unblock the main thread from these heavy actions and let it focus on UI and maybe the smithy Dynamic part
                     // as well as get a pool of workers with some round-robin magic.
                     def format(s: String): IO[String] = m
@@ -165,7 +170,7 @@ object Dumper {
                 .flatTap(_ => state.set(State.LoadingLibrary))
                 // just to finish loading
                 .flatTap(_.format("").attempt)
-                .flatTap(_.dump("").attempt)
+                .flatTap(_.dump().attempt)
                 .flatTap(dumper => state.set(State.Loaded(dumper)))
                 // this is probably not needed at this stage
                 .recoverWith(remapExceptions)
@@ -176,21 +181,26 @@ object Dumper {
 
   def remote: Dumper =
     new {
-      // http POST /api/dump s=$s
-      def dump(s: String): IO[String] = IO
+      // http POST /api/dump
+      def dump(inputs: List[(String, String)]): IO[String] = IO
         .fromPromise {
           IO {
             Fetch.fetch(
               "/api/dump",
               new RequestInit {
                 this.method = HttpMethod.POST
-                this.body = s
+                this.body = scalajs
+                  .js
+                  .JSON
+                  .stringify(
+                    inputs.map(_.toList.asInstanceOf[List[String]].toArray.toJSArray).toJSArray
+                  )
               },
             )
           }
         }
         .flatMap { r =>
-          IO.fromPromise(IO(r.text())).flatMap {
+          IO.fromPromise(IO(r.json())).map(_.asInstanceOf[String]).flatMap {
             case body if r.status == 200 => IO.pure(body)
             case body                    => IO.raiseError(new Exception(body))
           }
