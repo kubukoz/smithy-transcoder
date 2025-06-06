@@ -1,6 +1,7 @@
 import calico.html.io.*
 import calico.html.io.given
 import cats.effect.IO
+import cats.effect.kernel.Ref
 import cats.effect.kernel.Resource
 import cats.kernel.Eq
 import cats.syntax.all.*
@@ -15,6 +16,12 @@ import smithy4s.Document
 import smithy4s.Hints
 import smithy4s.schema.Schema
 import smithytranscoder.FieldFilter
+import smithytranscoder.Format
+import smithytranscoder.InputData
+import smithytranscoder.JsonFormat
+import smithytranscoder.SimpleRestJsonFormat
+
+import scala.concurrent.duration.*
 
 object SampleComponent {
   import monocle.syntax.all.*
@@ -37,6 +44,7 @@ object SampleComponent {
     initModel: String,
     initInput: String,
     externalUpdates: fs2.Stream[IO, ExternalUpdate],
+    stateRef: Ref[IO, HashState],
   )(
     using DumperOptionSig
   ): Resource[IO, HtmlElement[IO]] = {
@@ -64,9 +72,27 @@ object SampleComponent {
       readFormatKind: FormatKind,
       writeFormatKind: FormatKind,
       fieldFilter: FieldFilter,
-    )
+    ) {
+      def toSmithy = InputData(
+        modelText = currentIDL,
+        format = readFormatKind.toFormat(fieldFilter),
+        input = currentInput,
+      )
+    }
 
     object State {
+      def fromSmithy(input: InputData): State = State(
+        currentIDL = input.modelText,
+        currentInput = input.input,
+        readFormatKind = input.format.kind,
+        writeFormatKind = input.format.kind,
+        fieldFilter =
+          input.format match {
+            case Format.JsonCase(JsonFormat(ff))                     => ff
+            case Format.SimpleRestJsonCase(SimpleRestJsonFormat(ff)) => ff
+            case Format.XmlCase | Format.ProtobufCase                => FieldFilter.DEFAULT
+          },
+      )
       val init: State = {
         val initFmt = FormatKind.JSON
 
@@ -82,7 +108,19 @@ object SampleComponent {
     case class ValueWithSchema[A](a: A, s: Schema[A])
 
     for {
-      state <- SignallingRef[IO].of(State.init).toResource
+      initState <-
+        stateRef
+          .get
+          .flatMap {
+            case HashState.Valid(data) => IO.pure(State.fromSmithy(data))
+            case HashState.Invalid(e) =>
+              IO.consoleForIO.printStackTrace(new Exception("Couldn't decode hash state", e)) *>
+                IO.pure(State.init)
+            case HashState.Missing => IO.pure(State.init)
+          }
+          .toResource
+
+      state <- SignallingRef[IO].of(initState).toResource
 
       currentIDL = state.lens(_.currentIDL)
       currentInput = state.lens(_.currentInput)
@@ -203,6 +241,18 @@ object SampleComponent {
         modelSourceBlock,
         inputView,
       )
+
+      _ <-
+        state
+          .map(_.toSmithy)
+          .discrete
+          .changes
+          .debounce(500.millis)
+          .evalMap(stateRef.set.compose(HashState.Valid(_)))
+          .foreach(_ => IO.println("Updated hash state"))
+          .compile
+          .drain
+          .background
     } yield e
   }
 

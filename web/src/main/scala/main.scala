@@ -2,6 +2,7 @@ import calico.IOWebApp
 import calico.html.io.*
 import calico.html.io.given
 import cats.effect.IO
+import cats.effect.kernel.Ref
 import cats.effect.kernel.Resource
 import cats.kernel.Eq
 import cats.syntax.all.*
@@ -173,6 +174,14 @@ object App extends IOWebApp {
   ): Resource[IO, HtmlElement[IO]] =
     for {
       exampleChoice <- Channel.synchronous[IO, Example].toResource
+      stateRef =
+        Window[IO]
+          .location
+          .hash
+          .imap(StateHashCodec.decode(_)) {
+            case HashState.Valid(data)                    => StateHashCodec.encode(data)
+            case HashState.Missing | HashState.Invalid(_) => ""
+          }
 
       e <- div(
         h1("Smithy Transcoder"),
@@ -201,6 +210,7 @@ object App extends IOWebApp {
             initInput = defaultExample.input,
             initModel = defaultExample.model,
             externalUpdates = exampleChoice.stream.map(_.toSampleComponentInput),
+            stateRef = stateRef,
           ),
         ),
       )

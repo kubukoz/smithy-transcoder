@@ -8,6 +8,7 @@ use smithy4s.meta#typeclass
 @typeclass(targetType: "cats.Hash", interpreter: "smithy4s.interopcats.SchemaVisitorHash")
 structure hash {}
 
+@hash
 structure InputData {
     @required
     modelText: String
@@ -17,6 +18,9 @@ structure InputData {
 
     @required
     input: String
+
+    @required
+    version: Integer = 1
 }
 
 @hash
