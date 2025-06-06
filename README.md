@@ -18,3 +18,9 @@ Possible improvements for the future:
 - Embedding in Smithy4s documentation
 - ~~Code formatting~~ (done)
 - Textarea replacement (Codemirror, Monaco, etc.)
+
+## Development
+
+```
+cd web && yarn start
+```
