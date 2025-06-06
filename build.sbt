@@ -54,8 +54,7 @@ ThisBuild / githubWorkflowPublish := List.concat(
 ThisBuild / githubWorkflowGeneratedCI ~= {
   _.map {
     case job if job.id == "publish" =>
-      job
-        .withEnvironment(
+      job .withEnvironment(
           Some(
             JobEnvironment(
               "github-pages",
@@ -64,7 +63,6 @@ ThisBuild / githubWorkflowGeneratedCI ~= {
             )
           )
         )
-        .withNeeds(Nil)
     case job => job
   }
 }
