@@ -54,7 +54,7 @@ object SchemaBuilder {
       // transplant the Http hint from the operation, if one is present.
       // otherwise, a default value will be used.
       (input, op).mapN {
-        case (input, None) => input.toHttpInputSchema
+        case (input, None)     => input.toHttpInputSchema
         case (input, Some(op)) =>
           input.addHints(op.hints.get[Http].toList.map(h => h: Hints.Binding)*)
       }
@@ -69,7 +69,7 @@ object SchemaBuilder {
     items.match {
       case Nil        => IO.raiseError(new Exception(s"no $kindPlural found"))
       case one :: Nil => IO.pure(one)
-      case more =>
+      case more       =>
         more
           .filter(hints(_).has[TranscoderSelect])
           .match {

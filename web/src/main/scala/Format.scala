@@ -137,7 +137,7 @@ extension (fmt: Format) {
                   .flatMap {
                     case Left(e)                        => deff.complete(Left(e.toString()))
                     case Right(r) if r.status.isSuccess => IO.unit
-                    case Right(r) =>
+                    case Right(r)                       =>
                       r.bodyText.compile.string.flatMap { responseText =>
                         deff.complete(Left(s"HTTP ${r.status}: $responseText"))
                       }
