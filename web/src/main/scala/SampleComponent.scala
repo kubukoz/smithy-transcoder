@@ -112,7 +112,7 @@ object SampleComponent {
           .get
           .flatMap {
             case HashState.Valid(data) => IO.pure(State.fromSmithy(data))
-            case HashState.Invalid(e) =>
+            case HashState.Invalid(e)  =>
               IO.consoleForIO.printStackTrace(new Exception("Couldn't decode hash state", e)) *>
                 IO.pure(State.init)
             case HashState.Missing => IO.pure(State.init)
