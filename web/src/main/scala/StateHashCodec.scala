@@ -11,7 +11,7 @@ object StateHashCodec {
   def decode(compressed: String): HashState =
 
     compressed.stripPrefix("#") match {
-      case "" => HashState.Missing
+      case ""       => HashState.Missing
       case stripped =>
         Option(
           lzstring.decompressFromEncodedURIComponent(stripped)

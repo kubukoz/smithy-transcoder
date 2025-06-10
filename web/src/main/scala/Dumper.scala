@@ -30,7 +30,7 @@ object Dumper {
   enum State {
     case Init
     case LoadingCheerp(progress: Int, total: Int)
-    case LoadingLibrary
+    case LibraryWarmup
     case Loaded(dumper: Dumper)
 
     def toOption: Option[Dumper] =
@@ -50,20 +50,20 @@ object Dumper {
     signal.map {
       case State.Init                => "Initializing..."
       case State.LoadingCheerp(_, _) => "Loading JVM..."
-      case State.LoadingLibrary      => "Loading library..."
+      case State.LibraryWarmup       => "Warming up library..."
       case _: State.Loaded           => "Loaded"
     },
     progressTag(
       maxAttr <--
         signal.map {
           case State.LoadingCheerp(_, total) => total.show.some
-          case State.LoadingLibrary          => "100".some
+          case State.LibraryWarmup           => "100".some
           case _                             => None
         },
       value <-- signal.map {
         case State.Init                       => None
         case State.LoadingCheerp(progress, _) => progress.show.some
-        case State.LoadingLibrary             => "99".some
+        case State.LibraryWarmup              => "99".some
         case State.Loaded(_)                  => "100".some
       },
     ),
@@ -167,7 +167,7 @@ object Dumper {
                       .recoverWith(remapExceptions)
                   }
                 }
-                .flatTap(_ => state.set(State.LoadingLibrary))
+                .flatTap(_ => state.set(State.LibraryWarmup))
                 // just to finish loading
                 .flatTap(_.format("").attempt)
                 .flatTap(_.dump().attempt)
