@@ -81,6 +81,7 @@ val smithyDump = project
       "--release",
       "8",
     ),
+    assembly / assemblyOutputPath := baseDirectory.value / "target" / "smithy-dump.jar",
   )
   .enablePlugins(AssemblyPlugin)
 
