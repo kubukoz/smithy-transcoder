@@ -74,7 +74,7 @@ val smithyDump = project
     libraryDependencies ++= Seq(
       "software.amazon.smithy" % "smithy-model" % "1.64.0",
       "software.amazon.smithy" % "smithy-syntax" % "1.64.0",
-      "com.disneystreaming.alloy" % "alloy-core" % "0.3.34",
+      "com.disneystreaming.alloy" % "alloy-core" % "0.3.35",
     ),
     autoScalaLibrary := false,
     javacOptions ++= Seq(
