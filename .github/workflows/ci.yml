@@ -42,7 +42,7 @@ jobs:
       matrix:
         os: [ubuntu-22.04]
         scala: [3]
-        java: [temurin@11]
+        java: [temurin@17]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
@@ -54,17 +54,17 @@ jobs:
       - name: Setup sbt
         uses: sbt/setup-sbt@v1
 
-      - name: Setup Java (temurin@11)
-        id: setup-java-temurin-11
-        if: matrix.java == 'temurin@11'
+      - name: Setup Java (temurin@17)
+        id: setup-java-temurin-17
+        if: matrix.java == 'temurin@17'
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: 11
+          java-version: 17
           cache: sbt
 
       - name: sbt update
-        if: matrix.java == 'temurin@11' && steps.setup-java-temurin-11.outputs.cache-hit == 'false'
+        if: matrix.java == 'temurin@17' && steps.setup-java-temurin-17.outputs.cache-hit == 'false'
         run: sbt +update
 
       - name: Check that workflows are up to date
@@ -109,7 +109,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-22.04]
-        java: [temurin@11]
+        java: [temurin@17]
     runs-on: ${{ matrix.os }}
     environment:
       name: github-pages
@@ -123,17 +123,17 @@ jobs:
       - name: Setup sbt
         uses: sbt/setup-sbt@v1
 
-      - name: Setup Java (temurin@11)
-        id: setup-java-temurin-11
-        if: matrix.java == 'temurin@11'
+      - name: Setup Java (temurin@17)
+        id: setup-java-temurin-17
+        if: matrix.java == 'temurin@17'
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: 11
+          java-version: 17
           cache: sbt
 
       - name: sbt update
-        if: matrix.java == 'temurin@11' && steps.setup-java-temurin-11.outputs.cache-hit == 'false'
+        if: matrix.java == 'temurin@17' && steps.setup-java-temurin-17.outputs.cache-hit == 'false'
         run: sbt +update
 
       - name: Download target directories (3)
