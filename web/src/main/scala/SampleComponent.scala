@@ -12,7 +12,6 @@ import monocle.Focus
 import monocle.Lens
 import smithy.api.Http
 import smithy.api.NonEmptyString
-import smithy4s.Document
 import smithy4s.Hints
 import smithy4s.schema.Schema
 import smithytranscoder.FieldFilter
