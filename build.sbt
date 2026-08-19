@@ -73,7 +73,7 @@ ThisBuild / mergifyStewardConfig ~= (_.map(_.withMergeMinors(true)))
 val smithyDump = project
   .settings(
     libraryDependencies ++= Seq(
-      "software.amazon.smithy" % "smithy-model" % "1.72.1",
+      "software.amazon.smithy" % "smithy-model" % "1.73.0",
       "software.amazon.smithy" % "smithy-syntax" % "1.72.1",
       "com.disneystreaming.alloy" % "alloy-core" % "0.3.40",
     ),
