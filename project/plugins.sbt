@@ -1,5 +1,5 @@
 addSbtPlugin("org.scala-js" % "sbt-scalajs" % "1.22.0")
-addSbtPlugin("com.eed3si9n" % "sbt-assembly" % "2.4.2")
+addSbtPlugin("com.eed3si9n" % "sbt-assembly" % "2.5.0")
 
 addSbtPlugin("org.typelevel" % "sbt-typelevel-github-actions" % "0.8.7")
 addSbtPlugin("org.typelevel" % "sbt-typelevel-mergify" % "0.8.7")
